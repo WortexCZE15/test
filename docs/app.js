@@ -166,7 +166,7 @@ function logout(){ sb.auth.signOut(); }
 /* ---------- seznam ---------- */
 function loadQuizzes(){
   return sb.from("quizzes")
-    .select("id,title,question_count,locked,price,updated_at,author_id,profiles(nickname)")
+    .select("id,title,question_count,locked,price,updated_at,author_id,profiles!quizzes_author_id_fkey(nickname)")
     .order("updated_at",{ascending:false})
     .limit(500)
     .then(function(r){
@@ -328,8 +328,8 @@ function openProfile(id){
   var none = Promise.resolve({data:[]});
   Promise.all([
     sb.from("profiles").select("id,nickname,created_at,credits,is_admin").eq("id", id).maybeSingle(),
-    sb.from("quizzes").select("id,title,question_count,locked,price,updated_at,author_id,profiles(nickname)").eq("author_id", id).order("updated_at",{ascending:false}),
-    priv ? sb.from("purchases").select("created_at,quizzes(id,title,question_count,locked,price,updated_at,author_id,profiles(nickname))").eq("buyer_id", id).order("created_at",{ascending:false}) : none,
+    sb.from("quizzes").select("id,title,question_count,locked,price,updated_at,author_id,profiles!quizzes_author_id_fkey(nickname)").eq("author_id", id).order("updated_at",{ascending:false}),
+    priv ? sb.from("purchases").select("created_at,quizzes(id,title,question_count,locked,price,updated_at,author_id,profiles!quizzes_author_id_fkey(nickname))").eq("buyer_id", id).order("created_at",{ascending:false}) : none,
     priv ? sb.from("credit_log").select("amount,reason,created_at").eq("user_id", id).order("created_at",{ascending:false}).limit(20) : none
   ]).then(function(r){
     if (seq !== peopleSeq) return;
@@ -429,7 +429,7 @@ function confirmDelete(btn, id){
 
 function openQuiz(id, then){
   Promise.all([
-    sb.from("quizzes").select("id,title,author_id,price,question_count,locked,updated_at,profiles(nickname)").eq("id", id).single(),
+    sb.from("quizzes").select("id,title,author_id,price,question_count,locked,updated_at,profiles!quizzes_author_id_fkey(nickname)").eq("id", id).single(),
     sb.from("quiz_content").select("questions,enc").eq("quiz_id", id).maybeSingle()
   ]).then(function(r){
     var e = r[0].error || r[1].error;
