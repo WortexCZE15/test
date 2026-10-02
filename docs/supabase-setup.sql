@@ -287,14 +287,211 @@ create policy "credit_log: vlastni nebo spravce" on public.credit_log
   for select to authenticated using (user_id = auth.uid() or public.is_admin());
 
 -- =========================================================
+-- Profilovka a popis, předměty a štítky, hodnocení, hraní,
+-- sledování a nahlášení
+-- =========================================================
+alter table public.profiles add column if not exists bio text;
+alter table public.profiles add column if not exists avatar_v bigint;   -- verze profilovky (null = žádná)
+alter table public.profiles drop constraint if exists profiles_bio_check;
+alter table public.profiles add constraint profiles_bio_check check (bio is null or char_length(bio) <= 300);
+
+alter table public.quizzes add column if not exists subject text;
+alter table public.quizzes add column if not exists tags text[] not null default '{}';
+alter table public.quizzes add column if not exists rating_avg numeric(3,2);
+alter table public.quizzes add column if not exists rating_count int not null default 0;
+alter table public.quizzes add column if not exists play_count int not null default 0;
+alter table public.quizzes add column if not exists score_sum bigint not null default 0;
+alter table public.quizzes add column if not exists total_sum bigint not null default 0;
+alter table public.quizzes drop constraint if exists quizzes_subject_check;
+alter table public.quizzes add constraint quizzes_subject_check check (subject is null or char_length(subject) between 1 and 40);
+alter table public.quizzes drop constraint if exists quizzes_tags_check;
+alter table public.quizzes add constraint quizzes_tags_check check (cardinality(tags) <= 5);
+
+-- Hodnocení: 1–5 hvězdiček a komentář, jedno na člověka a kvíz.
+create table if not exists public.ratings (
+  quiz_id uuid not null references public.quizzes (id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  stars int not null check (stars between 1 and 5),
+  comment text check (comment is null or char_length(comment) <= 500),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (quiz_id, user_id)
+);
+
+-- Odehrané kvízy (statistiky).
+create table if not exists public.plays (
+  id bigint generated always as identity primary key,
+  quiz_id uuid not null references public.quizzes (id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  score int not null,
+  total int not null,
+  created_at timestamptz not null default now(),
+  check (total between 1 and 500 and score between 0 and total)
+);
+create index if not exists plays_user_idx on public.plays (user_id, created_at desc);
+create index if not exists plays_quiz_idx on public.plays (quiz_id);
+
+-- Sledování autorů.
+create table if not exists public.follows (
+  follower_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  followee_id uuid not null references public.profiles (id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (follower_id, followee_id),
+  check (follower_id <> followee_id)
+);
+create index if not exists follows_followee_idx on public.follows (followee_id);
+
+-- Nahlášené kvízy.
+create table if not exists public.reports (
+  id bigint generated always as identity primary key,
+  quiz_id uuid not null references public.quizzes (id) on delete cascade,
+  reporter_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  reason text not null check (char_length(reason) between 3 and 500),
+  status text not null default 'open' check (status in ('open', 'resolved', 'dismissed')),
+  created_at timestamptz not null default now(),
+  resolved_by uuid references public.profiles (id) on delete set null,
+  resolved_at timestamptz
+);
+create unique index if not exists reports_one_open_idx on public.reports (quiz_id, reporter_id) where status = 'open';
+
+-- Souhrny v tabulce quizzes počítá databáze sama.
+create or replace function public.refresh_quiz_rating()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_quiz uuid := coalesce(new.quiz_id, old.quiz_id);
+begin
+  update public.quizzes q set
+    rating_avg = (select round(avg(stars)::numeric, 2) from public.ratings where quiz_id = v_quiz),
+    rating_count = (select count(*) from public.ratings where quiz_id = v_quiz)
+  where q.id = v_quiz;
+  return null;
+end;
+$$;
+drop trigger if exists ratings_refresh on public.ratings;
+create trigger ratings_refresh after insert or update or delete on public.ratings
+  for each row execute function public.refresh_quiz_rating();
+
+create or replace function public.count_play()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.quizzes set
+    play_count = play_count + 1,
+    score_sum = score_sum + new.score,
+    total_sum = total_sum + new.total
+  where id = new.quiz_id;
+  return null;
+end;
+$$;
+drop trigger if exists plays_count on public.plays;
+create trigger plays_count after insert on public.plays
+  for each row execute function public.count_play();
+
+alter table public.ratings enable row level security;
+alter table public.plays enable row level security;
+alter table public.follows enable row level security;
+alter table public.reports enable row level security;
+
+drop policy if exists "ratings: prihlaseni ctou" on public.ratings;
+create policy "ratings: prihlaseni ctou" on public.ratings
+  for select to authenticated using (true);
+drop policy if exists "ratings: hodnotit s pristupem" on public.ratings;
+create policy "ratings: hodnotit s pristupem" on public.ratings
+  for insert to authenticated
+  with check (user_id = auth.uid() and public.can_open_quiz(quiz_id)
+              and not exists (select 1 from public.quizzes q where q.id = quiz_id and q.author_id = auth.uid()));
+drop policy if exists "ratings: menit svoje" on public.ratings;
+create policy "ratings: menit svoje" on public.ratings
+  for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "ratings: mazat svoje" on public.ratings;
+create policy "ratings: mazat svoje" on public.ratings
+  for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "plays: vlastni, autor nebo spravce" on public.plays;
+create policy "plays: vlastni, autor nebo spravce" on public.plays
+  for select to authenticated
+  using (user_id = auth.uid() or public.is_admin()
+         or exists (select 1 from public.quizzes q where q.id = quiz_id and q.author_id = auth.uid()));
+drop policy if exists "plays: zapsat svoje" on public.plays;
+create policy "plays: zapsat svoje" on public.plays
+  for insert to authenticated with check (user_id = auth.uid() and public.can_open_quiz(quiz_id));
+
+drop policy if exists "follows: prihlaseni ctou" on public.follows;
+create policy "follows: prihlaseni ctou" on public.follows
+  for select to authenticated using (true);
+drop policy if exists "follows: sledovat" on public.follows;
+create policy "follows: sledovat" on public.follows
+  for insert to authenticated with check (follower_id = auth.uid());
+drop policy if exists "follows: prestat" on public.follows;
+create policy "follows: prestat" on public.follows
+  for delete to authenticated using (follower_id = auth.uid());
+
+drop policy if exists "reports: vlastni nebo spravce" on public.reports;
+create policy "reports: vlastni nebo spravce" on public.reports
+  for select to authenticated using (reporter_id = auth.uid() or public.is_admin());
+drop policy if exists "reports: nahlasit" on public.reports;
+create policy "reports: nahlasit" on public.reports
+  for insert to authenticated with check (reporter_id = auth.uid() and status = 'open');
+drop policy if exists "reports: spravce resi" on public.reports;
+create policy "reports: spravce resi" on public.reports
+  for update to authenticated using (public.is_admin()) with check (public.is_admin());
+
+-- Profilovka: veřejné úložiště „avatars“, každý smí měnit jen svoji složku <id>/.
+do $$
+begin
+  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+      values ('avatars', 'avatars', true, 524288, array['image/webp', 'image/png', 'image/jpeg'])
+      on conflict (id) do update set public = true, file_size_limit = 524288,
+        allowed_mime_types = array['image/webp', 'image/png', 'image/jpeg'];
+
+    drop policy if exists "avatars: cist svoje" on storage.objects;
+    create policy "avatars: cist svoje" on storage.objects
+      for select to authenticated
+      using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
+    drop policy if exists "avatars: nahrat svoje" on storage.objects;
+    create policy "avatars: nahrat svoje" on storage.objects
+      for insert to authenticated
+      with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
+    drop policy if exists "avatars: zmenit svoje" on storage.objects;
+    create policy "avatars: zmenit svoje" on storage.objects
+      for update to authenticated
+      using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text))
+      with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
+    drop policy if exists "avatars: smazat svoje" on storage.objects;
+    create policy "avatars: smazat svoje" on storage.objects
+      for delete to authenticated
+      using (bucket_id = 'avatars' and (storage.foldername(name))[1] = (select auth.uid()::text));
+  end if;
+end;
+$$;
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
-revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log from anon, authenticated;
+revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
+  public.ratings, public.plays, public.follows, public.reports from anon, authenticated;
 grant select on public.profiles to authenticated;
-grant update (nickname) on public.profiles to authenticated;
-grant select, insert, update, delete on public.quizzes to authenticated;
+grant update (nickname, bio, avatar_v) on public.profiles to authenticated;
+-- Souhrny (hodnocení, počet hraní) může měnit jen databáze, ne autor.
+grant select, delete on public.quizzes to authenticated;
+grant insert (title, question_count, price, locked, subject, tags, updated_at) on public.quizzes to authenticated;
+grant update (title, question_count, price, locked, subject, tags, updated_at) on public.quizzes to authenticated;
 grant select, insert, update on public.quiz_content to authenticated;
 grant select on public.purchases, public.credit_log to authenticated;
+grant select, insert, delete on public.ratings, public.follows to authenticated;
+grant update (stars, comment, updated_at) on public.ratings to authenticated;
+grant select, insert on public.plays to authenticated;
+grant select on public.reports to authenticated;
+grant insert (quiz_id, reason) on public.reports to authenticated;
+grant update (status, resolved_by, resolved_at) on public.reports to authenticated;
 
 revoke all on function public.nickname_taken(text) from public;
 grant execute on function public.nickname_taken(text) to anon, authenticated;
