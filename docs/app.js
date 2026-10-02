@@ -177,45 +177,23 @@ function authView(){
   }});
   var btn = el("button",{class:"btn block",type:"submit",text: S.busy ? "Chvilku…" : reg ? "Vytvořit účet" : "Přihlásit se",disabled:S.busy});
 
-  var form = el("form",{class:"authform",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
+  var form = el("form",{class:"authform panel",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
     el("div",{class:"tabs seg",role:"group","aria-label":"Přihlášení nebo registrace"},[
       el("button",{type:"button",class:"tab","aria-pressed":String(!reg),text:"Přihlášení",onclick:function(){ S.authTab="login"; S.msg=null; render(); }}),
       el("button",{type:"button",class:"tab","aria-pressed":String(reg),text:"Registrace",onclick:function(){ S.authTab="register"; S.msg=null; render(); }})
     ]),
-    el("div",{},[el("h1",{text: reg ? "Vytvoř si účet" : "Vítej zpátky"}),
-      el("p",{class:"muted",text: reg ? "Zabere to minutu. Pak můžeš hned procházet a přidávat." : "Přihlas se a pokračuj tam, kde jsi skončil."})]),
     el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text:"E-mail"}), email]),
     reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Uvidí ji ostatní u tvých kvízů, materiálů a recenzí."})]) : null,
     el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), el("div",{class:"pwwrap"},[pw, pwToggle]), reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
     msgEl(),
-    btn,
-    el("p",{class:"switch muted"},[ reg ? "Už máš účet? " : "Nemáš účet? ",
-      el("button",{type:"button",class:"btn link",text: reg ? "Přihlas se" : "Zaregistruj se",onclick:function(){ S.authTab = reg ? "login" : "register"; S.msg = null; render(); }}) ])
+    btn
   ]);
 
-  function feat(t, d){ return el("li",{},[el("span",{class:"tick","aria-hidden":"true",text:"✓"}), el("span",{},[el("strong",{text:t}), " "+d])]); }
-  var hero = el("section",{class:"authhero"},[
-    el("div",{class:"herobrand"},[logoMark(44), wordmark("studentský web")]),
-    el("h2",{text:"Studuj chytřeji. Společně."}),
-    el("ul",{class:"feats"},[
-      feat("Kvízy", "na procvičení před zkouškou, i z PDF."),
-      feat("Materiály", "výpisky, skripta a odkazy od spolužáků."),
-      feat("Recenze učitelů", "ať víš, do čeho jdeš."),
-      feat("Kredity", "za to, co nasdílíš.")
-    ]),
-    el("div",{class:"herocards","aria-hidden":"true"},[
-      el("div",{class:"hcard one"},[el("span",{class:"hico"},[icon("quiz",18)]), el("span",{},[el("strong",{text:"Botanika – pletiva"}), el("small",{text:"★★★★★ 4,8 · 32 otázek"})])]),
-      el("div",{class:"hcard two"},[el("span",{class:"hico"},[icon("teacher",18)]), el("span",{},[el("strong",{text:"Recenze učitelů"}), el("small",{text:"★★★★☆ · férové zkoušky"})])]),
-      el("div",{class:"hcard three"},[el("span",{class:"hico"},[icon("file",18)]), el("span",{},[el("strong",{text:"Výpisky z genetiky"}), el("small",{text:"PDF · 2,4 MB"})])])
-    ]),
-    el("p",{class:"heronote",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."}),
-    svgEl("svg",{viewBox:"0 0 40 40",class:"herodeco","aria-hidden":"true"},[
-      svgEl("path",{d:"M20 38V18",stroke:"currentColor","stroke-width":"1.4","stroke-linecap":"round",fill:"none"}),
-      svgEl("path",{d:"M20 22c-6.5 0-10-4.2-10-10 6 0 10 3.6 10 10z",fill:"none",stroke:"currentColor","stroke-width":"1.2"}),
-      svgEl("path",{d:"M20 18c0-6.8 4.3-11 11-11 0 6.6-4.1 11-11 11z",fill:"none",stroke:"currentColor","stroke-width":"1.2"})
-    ])
-  ]);
-  return [el("div",{class:"authwrap"},[hero, form])];
+  return [el("div",{class:"authsimple"},[
+    el("h1",{class:"authtitle"},[logoMark(46), el("span",{},["ČZU ", el("span",{class:"hub",text:"Hub"})])]),
+    form,
+    el("p",{class:"authnote",text:"Neoficiální studentský web, není provozovaný Českou zemědělskou univerzitou."})
+  ])];
 }
 
 function doLogin(email, pw){
