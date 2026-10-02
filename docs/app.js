@@ -272,10 +272,10 @@ function renderBar(){
   bar.replaceChildren(el("div",{class:"barin"},[
     el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("span",{},[el("strong",{text:"Kvízy"}), el("small",{text:"studijní materiály"})])]),
     el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
-      el("a",{href:"#u/"+S.me, class:"credits", title:"Tvoje kredity", text:kr((S.profile && S.profile.credits) || 0)}),
       link("#kvizy","Kvízy","home"),
       link("#lide","Lidé","people"),
       link("#u/"+S.me,"Můj profil","me"),
+      el("a",{href:"#u/"+S.me, class:"credits", title:"Tvoje kredity", text:kr((S.profile && S.profile.credits) || 0)}),
       el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout})
     ])
   ]));

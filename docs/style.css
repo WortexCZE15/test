@@ -139,7 +139,7 @@ textarea{min-height:170px;font-size:.95rem;resize:vertical}
 @media (prefers-reduced-motion: reduce){.progress>i{transition:none}}
 
 /* ---------- kredity ---------- */
-.credits{font-family:var(--display);font-weight:700;font-size:.95rem;color:var(--bar);background:var(--bar-muted);text-decoration:none;padding:6px 11px;border-radius:6px;margin-right:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.credits{font-family:var(--display);font-weight:700;font-size:.95rem;color:var(--bar);background:var(--bar-muted);text-decoration:none;padding:6px 11px;border-radius:6px;margin-inline:2px 6px;align-self:center;font-variant-numeric:tabular-nums;white-space:nowrap}
 .credits:hover{background:var(--bar-ink)}
 .credits:focus-visible{outline:3px solid var(--bar-ink);outline-offset:2px}
 .pill.price{background:var(--accent);color:var(--accent-ink)}
