@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheatTable CheatEngineTableVersion="45">
+  <CheatEntries>
+    <CheatEntry>
+      <ID>0</ID>
+      <Description>"--- AC Unity: F1-F4 zap/vyp, Shift+F1-F4 nastavi hodnotu (doplň adresy) ---"</Description>
+      <GroupHeader>1</GroupHeader>
+      <CheatEntries>
+        <CheatEntry>
+          <ID>1</ID>
+          <Description>"Penize"</Description>
+          <VariableType>4 Bytes</VariableType>
+          <Address></Address>
+          <Hotkeys>
+            <Hotkey>
+              <Action>Toggle Activation</Action>
+              <Keys><Key>112</Key></Keys>
+              <ID>0</ID>
+            </Hotkey>
+            <Hotkey>
+              <Action>Set Value</Action>
+              <Keys><Key>16</Key><Key>112</Key></Keys>
+              <Value>9999999</Value>
+              <ID>1</ID>
+            </Hotkey>
+          </Hotkeys>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>2</ID>
+          <Description>"Zdravi"</Description>
+          <VariableType>4 Bytes</VariableType>
+          <Address></Address>
+          <Hotkeys>
+            <Hotkey>
+              <Action>Toggle Activation</Action>
+              <Keys><Key>113</Key></Keys>
+              <ID>0</ID>
+            </Hotkey>
+            <Hotkey>
+              <Action>Set Value</Action>
+              <Keys><Key>16</Key><Key>113</Key></Keys>
+              <Value>100</Value>
+              <ID>1</ID>
+            </Hotkey>
+          </Hotkeys>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>3</ID>
+          <Description>"Naboje"</Description>
+          <VariableType>4 Bytes</VariableType>
+          <Address></Address>
+          <Hotkeys>
+            <Hotkey>
+              <Action>Toggle Activation</Action>
+              <Keys><Key>114</Key></Keys>
+              <ID>0</ID>
+            </Hotkey>
+            <Hotkey>
+              <Action>Set Value</Action>
+              <Keys><Key>16</Key><Key>114</Key></Keys>
+              <Value>99</Value>
+              <ID>1</ID>
+            </Hotkey>
+          </Hotkeys>
+        </CheatEntry>
+        <CheatEntry>
+          <ID>4</ID>
+          <Description>"Kourove bomby"</Description>
+          <VariableType>4 Bytes</VariableType>
+          <Address></Address>
+          <Hotkeys>
+            <Hotkey>
+              <Action>Toggle Activation</Action>
+              <Keys><Key>115</Key></Keys>
+              <ID>0</ID>
+            </Hotkey>
+            <Hotkey>
+              <Action>Set Value</Action>
+              <Keys><Key>16</Key><Key>115</Key></Keys>
+              <Value>99</Value>
+              <ID>1</ID>
+            </Hotkey>
+          </Hotkeys>
+        </CheatEntry>
+      </CheatEntries>
+    </CheatEntry>
+  </CheatEntries>
+  <UserdefinedSymbols/>
+  <LuaScript>-- Automaticky se pripoji ke hre, kdyz uz bezi
+if getProcessIDFromProcessName("ACU.exe") ~= nil then
+  openProcess("ACU.exe")
+end
+</LuaScript>
+</CheatTable>

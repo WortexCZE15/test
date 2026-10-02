@@ -47,6 +47,18 @@ Výsledek vypadá třeba takhle: `"ACU.exe"+0x51A2B30` → offsety `0x40, 0x18, 
 - pokud CE hledal typ **Float**, dej `"type": "float"`
 - cheaty s prázdným `base` trainer přeskočí
 
+
+## Varianta bez Pythonu: tabulka pro Cheat Engine (`ACU.CT`)
+`ACU.CT` je připravená tabulka s položkami Peníze, Zdraví, Náboje a Kouřové bomby a s nastavenými klávesami:
+- **F1–F4**: zmrazí hodnotu (zap/vyp)
+- **Shift+F1–F4**: nastaví hodnotu (9 999 999 peněz, 100 zdraví, 99 nábojů, 99 bomb)
+
+Jak ji použít:
+1. Spusť hru a dvojklikem otevři `ACU.CT`. Když se CE zeptá na spuštění Lua skriptu, dej **Yes**. Ten jen připojí CE ke hře.
+2. Najdi adresu nebo pointer podle kroků 2 a 3 výše.
+3. Dvojklikem na sloupec **Address** u položky (např. Peníze) ji otevřeš. Zaškrtni **Pointer**, nahoru zadej `"ACU.exe"+base` a doplň offsety. U obyčejné adresy ji tam jen vlož.
+4. Tabulku ulož (Ctrl+S). Příště už stačí ji otevřít.
+
 ## 5. Spusť trainer
 1. Spusť hru.
 2. Otevři příkazový řádek **jako správce** (bez toho nepůjde zapisovat do paměti hry ani chytat klávesy).
