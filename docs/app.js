@@ -52,6 +52,7 @@ function shuffle(a){ a=a.slice(); for (var i=a.length-1;i>0;i--){ var j=Math.flo
 function msgEl(where){ return S.msg && (S.msg.where || null) === (where || null) ? el("p",{class:"msg "+S.msg.kind, text:S.msg.text, role:"status"}) : null; }
 function render(){
   var a = document.activeElement, id = a && a.id && a.tagName === "INPUT" ? a.id : null, sel = id ? [a.selectionStart, a.selectionEnd] : null;
+  app.className = S.view === "auth" ? "wide" : "";
   app.replaceChildren.apply(app, view().filter(Boolean));
   renderBar();
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
@@ -128,29 +129,64 @@ function view(){
   }
 }
 
+/* Logo: klíček rostliny v zeleném čtverci (odkaz na zemědělskou univerzitu, ne oficiální logo ČZU). */
+var SVGNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, kids){
+  var n = document.createElementNS(SVGNS, tag);
+  for (var k in attrs) n.setAttribute(k, attrs[k]);
+  (kids || []).forEach(function(c){ n.appendChild(c); });
+  return n;
+}
+function logoMark(size){
+  return svgEl("svg",{viewBox:"0 0 40 40",width:String(size||36),height:String(size||36),class:"logomark","aria-hidden":"true"},[
+    svgEl("rect",{x:"0",y:"0",width:"40",height:"40",rx:"10",fill:"var(--brand)"}),
+    svgEl("path",{d:"M20 33V18",stroke:"#ffffff","stroke-width":"2.6","stroke-linecap":"round",fill:"none"}),
+    svgEl("path",{d:"M20 22c-6.5 0-10-4.2-10-10 6 0 10 3.6 10 10z",fill:"#cfe8b4"}),
+    svgEl("path",{d:"M20 18c0-6.8 4.3-11 11-11 0 6.6-4.1 11-11 11z",fill:"#ffffff"}),
+    svgEl("path",{d:"M12 33h16",stroke:"#9fd06b","stroke-width":"2.6","stroke-linecap":"round"})
+  ]);
+}
+function wordmark(sub){
+  return el("span",{class:"wordmark"},[
+    el("span",{class:"wm"},[el("b",{text:"ČZU"}), el("span",{class:"hub",text:"Hub"})]),
+    sub ? el("small",{text:sub}) : null
+  ]);
+}
+
 function authView(){
   var reg = S.authTab === "register";
-  var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true});
-  var nick = reg ? el("input",{type:"text",id:"au-nick",maxlength:"30",autocomplete:"nickname"}) : null;
+  var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true,placeholder:"jmeno@studenti.czu.cz"});
+  var nick = reg ? el("input",{type:"text",id:"au-nick",maxlength:"30",autocomplete:"nickname",placeholder:"Jak ti mají ostatní říkat"}) : null;
   var pw = el("input",{type:"password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true});
-  var btn = el("button",{class:"btn",type:"submit",text: reg ? "Zaregistrovat se" : "Přihlásit se",disabled:S.busy});
+  var btn = el("button",{class:"btn block",type:"submit",text: S.busy ? "Chvilku…" : reg ? "Vytvořit účet" : "Přihlásit se",disabled:S.busy});
 
-  var form = el("form",{class:"panel auth",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
-    el("div",{class:"authbrand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"Č"}), el("strong",{text:"ČZU Hub"})]),
-    el("h1",{text: reg ? "Vytvoř si účet" : "Přihlas se"}),
-    el("p",{class:"muted",text:"Kvízy, studijní materiály a recenze učitelů od studentů pro studenty."}),
-    el("div",{class:"tabs",role:"group","aria-label":"Přihlášení nebo registrace"},[
+  var form = el("form",{class:"authform",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
+    el("div",{class:"tabs seg",role:"group","aria-label":"Přihlášení nebo registrace"},[
       el("button",{type:"button",class:"tab","aria-pressed":String(!reg),text:"Přihlášení",onclick:function(){ S.authTab="login"; S.msg=null; render(); }}),
       el("button",{type:"button",class:"tab","aria-pressed":String(reg),text:"Registrace",onclick:function(){ S.authTab="register"; S.msg=null; render(); }})
     ]),
+    el("div",{},[el("h1",{text: reg ? "Vytvoř si účet" : "Vítej zpátky"}),
+      el("p",{class:"muted",text: reg ? "Zabere to minutu. Pak můžeš hned procházet a přidávat." : "Přihlas se a pokračuj tam, kde jsi skončil."})]),
     el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text:"E-mail"}), email]),
-    reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Tohle jméno uvidí ostatní u tvých kvízů."})]) : null,
+    reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Uvidí ji ostatní u tvých kvízů, materiálů a recenzí."})]) : null,
     el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), pw, reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
     msgEl(),
-    el("div",{class:"row"},[btn]),
-    el("p",{class:"muted small",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."})
+    btn
   ]);
-  return [form];
+
+  function feat(t, d){ return el("li",{},[el("span",{class:"tick","aria-hidden":"true",text:"✓"}), el("span",{},[el("strong",{text:t}), " "+d])]); }
+  var hero = el("section",{class:"authhero"},[
+    el("div",{class:"herobrand"},[logoMark(44), wordmark("studentský web")]),
+    el("h2",{text:"Studuj chytřeji. Společně."}),
+    el("ul",{class:"feats"},[
+      feat("Kvízy", "na procvičení před zkouškou, i z PDF."),
+      feat("Materiály", "výpisky, skripta a odkazy od spolužáků."),
+      feat("Recenze učitelů", "ať víš, do čeho jdeš."),
+      feat("Kredity", "za to, co nasdílíš.")
+    ]),
+    el("p",{class:"heronote",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."})
+  ]);
+  return [el("div",{class:"authwrap"},[hero, form])];
 }
 
 function doLogin(email, pw){
@@ -263,7 +299,7 @@ function renderBar(){
           : /^(edit|medit|revform)$/.test(S.view) ? "add" : "home";
   function link(href, text, key, extra){ return el("a",{href:href, class:"navlink", "aria-current": cur === key ? "page" : null},[text, extra || null]); }
   bar.replaceChildren(el("div",{class:"barin"},[
-    el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"Č"}), el("span",{},[el("strong",{text:"ČZU Hub"}), el("small",{text:"studentský web"})])]),
+    el("a",{href:"#kvizy",class:"brand","aria-label":"ČZU Hub, domů"},[logoMark(36), wordmark("studentský web")]),
     el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
       el("details",{class:"addmenu"},[
         el("summary",{class:"btn addbtn","aria-current": cur === "add" ? "page" : null,text:"+ Přidat"}),
