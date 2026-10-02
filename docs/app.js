@@ -95,6 +95,7 @@ function dbErrText(e){
   if (/NEDOSTATEK_KREDITU/.test(m)) return "Nemáš dost kreditů. Kredity ti přidá správce.";
   if (/column .* does not exist|Could not find the .* (column|table|function)|relation .* does not exist/i.test(m)) return "Databáze ještě nemá nejnovější nastavení. Správce musí znovu spustit supabase-setup.sql.";
   if (/^[A-ZÁ-Ž].*\.$/.test(m) && /[ěščřžýáíéůú]/i.test(m)) return m;
+  if (!m && e && (e.code || e.status)) return "Něco se nepovedlo (kód " + (e.code || e.status) + ").";
   return "Něco se nepovedlo: " + (m || "neznámá chyba") + ".";
 }
 function authErrText(e){
@@ -905,7 +906,9 @@ function profileView(){
 /* ---------- správa (admin) ---------- */
 function openAdmin(){
   S.adm = {loading:true, userQ:""};
-  var cnt = function(t, f){ var q = sb.from(t).select("*",{count:"exact",head:true}); return f ? f(q) : q; };
+  /* Počítá se přes jeden veřejný sloupec: např. text recenzí (comment) se číst nesmí, takže "*" by selhalo. */
+  var COUNT_COL = {teacher_reviews:"teacher_id", purchases:"quiz_id", plays:"id"};
+  var cnt = function(t, f){ var q = sb.from(t).select(COUNT_COL[t] || "id",{count:"exact",head:true}); return f ? f(q) : q; };
   Promise.all([
     cnt("profiles"), cnt("quizzes"), cnt("purchases"), cnt("plays"),
     sb.from("reports").select("id,reason,created_at,quiz_id,material_id,review_teacher_id,review_user_id,reporter_id,quizzes(title,author_id),materials(title),profiles!reports_reporter_id_fkey(nickname)").eq("status","open").order("created_at",{ascending:false}).limit(200),
