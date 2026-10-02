@@ -11,7 +11,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* view: loading | auth | home | people | profile | detail | admin | lock | buy | play | edit */
 var S = { view:"loading", authTab:"login", session:null, me:null, profile:null,
-          quizzes:[], listError:null, msg:null, people:null, peopleQ:"", prof:null, owned:{}, following:{}, buyFor:null, det:null, adm:null, openReports:0, homeTab:"all", subject:"", sort:"new", play:null, edit:null, lockFor:null, filter:"", busy:false };
+          quizzes:[], listError:null, msg:null, people:null, peopleQ:"", prof:null, owned:{}, following:{}, buyFor:null, det:null, adm:null, openReports:0, homeTab:"all", subject:"", sort:"new", tab:"quizzes", materials:null, teachers:null, ownedM:{}, mat:null, medit:null, tch:null, rev:null, mFilter:"", mSubject:"", mKind:"", mSort:"new", tFilter:"", tSort:"name", play:null, edit:null, lockFor:null, filter:"", busy:false };
 
 /* ---------- šifrování (heslo -> PBKDF2 -> AES-GCM) ---------- */
 var enc = new TextEncoder(), dec = new TextDecoder();
@@ -57,7 +57,8 @@ function render(){
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
 }
 function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); window.scrollTo(0,0); }
-/* Adresy: #kvizy (seznam), #lide (lidé), #u/<id> (profil), #q/<id> (detail kvízu), #admin (správa). */
+/* Adresy: #kvizy, #materialy, #ucitele (procházení), #lide, #u/<id> (profil), #q/<id> (kvíz), #m/<id> (materiál),
+   #t/<id> (učitel), #pridat/kviz | material | recenze[/<učitel>], #admin (správa). */
 function nav(h, keepMsg){ S.keepMsg = !!keepMsg; if (location.hash === h) route(); else location.hash = h; }
 function route(){
   if (!S.me) return;
@@ -67,8 +68,18 @@ function route(){
   var mq = /^#q\/([0-9a-f-]{36})$/i.exec(h);
   if (mq){ openDetail(mq[1]); go("detail", keep); return; }
   if (h === "#admin"){ if (isAdmin()) openAdmin(); go("admin", keep); return; }
+  var mm = /^#m\/([0-9a-f-]{36})(\/upravit)?$/i.exec(h);
+  if (mm){ if (mm[2]){ openMaterialEditor(mm[1]); go("medit", keep); } else { openMaterial(mm[1]); go("mdetail", keep); } return; }
+  var mt = /^#t\/([0-9a-f-]{36})$/i.exec(h);
+  if (mt){ openTeacher(mt[1]); go("tdetail", keep); return; }
+  var mr = /^#pridat\/recenze(?:\/([0-9a-f-]{36}))?$/i.exec(h);
+  if (mr){ openReviewForm(mr[1]); go("revform", keep); return; }
+  if (h === "#pridat/material"){ openMaterialEditor(null); go("medit", keep); return; }
+  if (h === "#pridat/kviz"){ openEditor(null, [], ""); return; }
+  if (h === "#materialy"){ S.tab = "materials"; go("home", keep); loadMaterials(); return; }
+  if (h === "#ucitele"){ S.tab = "teachers"; go("home", keep); loadTeachers(); return; }
   if (h === "#lide"){ go("people", keep); loadPeople(); if (!S.quizzes.length) loadQuizzes(); return; }
-  go("home", keep); loadQuizzes();
+  S.tab = "quizzes"; go("home", keep); loadQuizzes();
 }
 window.addEventListener("hashchange", route);
 function focusLater(id){ setTimeout(function(){ var x=document.getElementById(id); if (x) x.focus(); },0); }
@@ -105,6 +116,10 @@ function view(){
     case "profile": return profileView();
     case "detail": return detailView();
     case "admin": return adminView();
+    case "mdetail": return materialDetailView();
+    case "medit": return materialEditView();
+    case "tdetail": return teacherDetailView();
+    case "revform": return reviewFormView();
     case "lock": return [lockView()];
     case "buy": return buyView();
     case "play": return playView();
@@ -243,12 +258,21 @@ function renderBar(){
   if (!S.me || S.view === "auth" || S.view === "loading"){ bar.hidden = true; return; }
   bar.hidden = false;
   var cur = S.view === "people" ? "people" : S.view === "admin" ? "admin"
-          : (S.view === "profile" && S.prof && S.prof.id === S.me) ? "me" : (S.view === "profile" ? "people" : "home");
+          : (S.view === "profile" && S.prof && S.prof.id === S.me) ? "me" : S.view === "profile" ? "people"
+          : /^(edit|medit|revform)$/.test(S.view) ? "add" : "home";
   function link(href, text, key, extra){ return el("a",{href:href, class:"navlink", "aria-current": cur === key ? "page" : null},[text, extra || null]); }
   bar.replaceChildren(el("div",{class:"barin"},[
     el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("span",{},[el("strong",{text:"Kvízy"}), el("small",{text:"studijní materiály"})])]),
     el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
-      link("#kvizy","Kvízy","home"),
+      el("details",{class:"addmenu"},[
+        el("summary",{class:"btn addbtn","aria-current": cur === "add" ? "page" : null,text:"+ Přidat"}),
+        el("div",{class:"menu",role:"menu"},[
+          el("a",{href:"#pridat/recenze",role:"menuitem"},[el("strong",{text:"Recenze učitele"}), el("span",{text:"Ohodnoť vyučujícího"})]),
+          el("a",{href:"#pridat/material",role:"menuitem"},[el("strong",{text:"Materiál"}), el("span",{text:"Výpisky, PDF, odkaz"})]),
+          el("a",{href:"#pridat/kviz",role:"menuitem"},[el("strong",{text:"Kvíz"}), el("span",{text:"Otázky na procvičení"})])
+        ])
+      ]),
+      link("#"+({quizzes:"kvizy",materials:"materialy",teachers:"ucitele"}[S.tab] || "kvizy"),"Procházet","home"),
       link("#lide","Lidé","people"),
       isAdmin() ? link("#admin","Správa","admin", S.openReports ? el("span",{class:"badge","aria-label":S.openReports+" nevyřešených nahlášení",text:String(S.openReports)}) : null) : null,
       link("#u/"+S.me,"Můj profil","me"),
@@ -290,6 +314,8 @@ function quizCard(q, showAuthor){
 }
 
 function homeView(){
+  if (S.tab === "materials") return materialsBrowse();
+  if (S.tab === "teachers") return teachersBrowse();
   var list = S.quizzes, f = S.filter.trim().toLowerCase().replace(/^#/, "");
   var subjects = {}; list.forEach(function(q){ if (q.subject) subjects[q.subject] = true; });
   var shown = list.filter(function(q){
@@ -331,9 +357,10 @@ function homeView(){
 
   return [
     el("div",{class:"top"},[
-      el("div",{},[el("span",{class:"label",text:"Ahoj, "+(S.profile ? S.profile.nickname : "")}), el("h1",{text:"Všechny kvízy"})]),
-      el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }})
+      el("div",{},[el("span",{class:"label",text:"Ahoj, "+(S.profile ? S.profile.nickname : "")}), el("h1",{text:"Kvízy"})]),
+      el("a",{class:"btn",href:"#pridat/kviz",text:"Přidat kvíz"})
     ]),
+    browseTabs(),
     msgEl(),
     tabs,
     el("div",{class:"filters"},[search, subjSel, sortSel]),
@@ -391,7 +418,7 @@ function detailView(){
 
   var actions = el("div",{class:"row"},[
     open ? el("button",{class:"btn",text:"Hrát",onclick:function(){ openQuiz(q.id, "play"); }})
-         : el("button",{class:"btn",text:"Koupit za "+kr(q.price),onclick:function(){ S.buyFor = q; go("buy"); }}),
+         : el("button",{class:"btn",text:"Koupit za "+kr(q.price),onclick:function(){ S.buyFor = {type:"quiz", item:q}; go("buy"); }}),
     mine ? el("button",{class:"btn ghost",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}) : null,
     (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null
   ]);
@@ -507,27 +534,30 @@ function reportSection(D, q){
 
 /* ---------- nákup ---------- */
 function buyView(){
-  var q = S.buyFor, have = (S.profile && S.profile.credits) || 0, missing = q.price - have;
+  var B = S.buyFor.type ? S.buyFor : {type:"quiz", item:S.buyFor};
+  var q = B.item, isM = B.type === "material", have = (S.profile && S.profile.credits) || 0, missing = q.price - have;
+  var back = isM ? "#m/"+q.id : "#q/"+q.id;
   var btn = el("button",{class:"btn",text:"Koupit za "+kr(q.price),disabled: missing > 0,onclick:function(){
     btn.disabled = true; btn.textContent = "Kupuju…";
-    sb.rpc("buy_quiz",{p_quiz:q.id}).then(function(r){
+    sb.rpc(isM ? "buy_material" : "buy_quiz", isM ? {p_material:q.id} : {p_quiz:q.id}).then(function(r){
       if (r.error){ btn.disabled = false; btn.textContent = "Koupit za "+kr(q.price); return err("err", dbErrText(r.error)); }
-      S.profile.credits = r.data; S.owned[q.id] = true; renderBar();
-      openQuiz(q.id, "play");
+      S.profile.credits = r.data; renderBar();
+      if (isM){ S.ownedM[q.id] = true; S.msg = {kind:"ok", text:"Koupeno. Materiál teď můžeš otevřít kdykoli."}; nav(back, true); }
+      else { S.owned[q.id] = true; openQuiz(q.id, "play"); }
     });
   }});
   return [
-    el("div",{class:"top"},[el("h1",{text:"Koupit materiál"}), el("a",{class:"plink",href:"#q/"+q.id,text:"Zpět na kvíz"})]),
+    el("div",{class:"top"},[el("h1",{text: isM ? "Koupit materiál" : "Koupit kvíz"}), el("a",{class:"plink",href:back,text:"Zpět"})]),
     el("div",{class:"panel buy"},[
-      el("span",{class:"label",text:"Placený kvíz"}),
+      el("span",{class:"label",text: isM ? "Placený materiál" : "Placený kvíz"}),
       el("h2",{text:q.title}),
-      el("p",{class:"muted"},[ (q.question_count||0)+" "+plural(q.question_count||0,"otázka","otázky","otázek")+" · autor ", profileLink(q.author_id, authorOf(q)) ]),
+      el("p",{class:"muted"},[ (isM ? (KIND_LABEL[q.kind] || "Materiál") : (q.question_count||0)+" "+plural(q.question_count||0,"otázka","otázky","otázek"))+" · autor ", profileLink(q.author_id, authorOf(q)) ]),
       el("dl",{class:"stats two"},[
         el("div",{},[el("dt",{text:"Cena"}), el("dd",{text:kr(q.price)})]),
         el("div",{},[el("dt",{text:"Máš"}), el("dd",{text:kr(have)})])
       ]),
       missing > 0 ? el("p",{class:"msg err",text:"Chybí ti "+kr(missing)+". Kredity ti přidá správce."})
-                  : el("p",{class:"muted small",text:"Po nákupu ti zůstane "+kr(have - q.price)+". Kvíz pak můžeš hrát kdykoli znovu. Kredity dostane autor."}),
+                  : el("p",{class:"muted small",text:"Po nákupu ti zůstane "+kr(have - q.price)+". "+(isM ? "Materiál" : "Kvíz")+" pak můžeš otevřít kdykoli znovu. Kredity dostane autor."}),
       msgEl(),
       el("div",{class:"row"},[btn])
     ])
@@ -590,7 +620,10 @@ function openProfile(id){
     priv ? sb.from("credit_log").select("amount,reason,created_at").eq("user_id", id).order("created_at",{ascending:false}).limit(20) : none,
     sb.from("follows").select("follower_id",{count:"exact",head:true}).eq("followee_id", id),
     sb.from("follows").select("followee_id",{count:"exact",head:true}).eq("follower_id", id),
-    priv ? sb.from("plays").select("score,total").eq("user_id", id).limit(1000) : none
+    priv ? sb.from("plays").select("score,total").eq("user_id", id).limit(1000) : none,
+    sb.from("materials").select(MAT_COLS).eq("author_id", id).order("updated_at",{ascending:false}),
+    sb.from("teacher_reviews").select("teacher_id,stars,subject,comment,updated_at,teachers(name)").eq("user_id", id).order("updated_at",{ascending:false}).limit(100),
+    priv ? sb.from("material_purchases").select("created_at,materials("+MAT_COLS+")").eq("buyer_id", id).order("created_at",{ascending:false}) : none
   ]).then(function(r){
     if (seq !== peopleSeq) return;
     var e = r.map(function(x){ return x.error; }).filter(Boolean)[0];
@@ -600,6 +633,7 @@ function openProfile(id){
       S.prof = {id:id, p:r[0].data, quizzes:r[1].data || [],
         bought:(r[2].data || []).map(function(x){ return x.quizzes; }).filter(Boolean), log:r[3].data || [],
         followers:r[4].count || 0, followingN:r[5].count || 0, priv:priv,
+        mats:r[7].data || [], reviews:r[8].data || [], boughtM:(r[9].data || []).map(function(x){ return x.materials; }).filter(Boolean),
         played:plays.length, score:plays.reduce(function(a,p){ return a + p.score; }, 0), total:plays.reduce(function(a,p){ return a + p.total; }, 0)};
       if (id === S.me && r[0].data){ S.profile = Object.assign({}, S.profile, r[0].data); renderBar(); }
     }
@@ -751,6 +785,8 @@ function profileView(){
   var me = P.id === S.me, qs = P.quizzes;
   var stats = [
     el("div",{},[el("dt",{text:"Kvízy"}), el("dd",{text:String(qs.length)})]),
+    el("div",{},[el("dt",{text:"Materiály"}), el("dd",{text:String(P.mats.length)})]),
+    el("div",{},[el("dt",{text:"Recenze"}), el("dd",{text:String(P.reviews.length)})]),
     el("div",{},[el("dt",{text:"Sledující"}), el("dd",{text:String(P.followers)})]),
     el("div",{},[el("dt",{text:"Sleduje"}), el("dd",{text:String(P.followingN)})]),
     P.priv ? el("div",{},[el("dt",{text:"Kredity"}), el("dd",{text:String(P.p.credits || 0)})]) : null,
@@ -780,8 +816,19 @@ function profileView(){
     el("div",{class:"top"},[el("h2",{text: me ? "Moje materiály" : "Materiály"}), me ? el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }}) : null]),
     qs.length ? el("div",{class:"cards"}, qs.map(function(q){ return quizCard(q, false); }))
       : el("p",{class:"muted",text: me ? "Zatím jsi nic nevytvořil. Dej Nový kvíz." : P.p.nickname+" zatím nic nevytvořil."}),
-    P.priv ? el("h2",{text: me ? "Koupené materiály" : "Koupil(a)"}) : null,
-    P.priv ? (P.bought.length ? el("div",{class:"cards"}, P.bought.map(function(q){ return quizCard(q, true); }))
+    el("h2",{text: me ? "Moje studijní materiály" : "Studijní materiály"}),
+    P.mats.length ? el("div",{class:"cards"}, P.mats.map(function(m){ return materialCard(m, false); }))
+      : el("p",{class:"muted",text: me ? "Zatím jsi nic nenahrál. Dej Přidat → Materiál." : P.p.nickname+" zatím nic nenahrál."}),
+    el("h2",{text: me ? "Moje recenze učitelů" : "Recenze učitelů"}),
+    P.reviews.length ? el("ul",{class:"history"}, P.reviews.map(function(x){
+        return el("li",{},[
+          el("span",{class:"txt"},[el("a",{class:"plink",href:"#t/"+x.teacher_id,text:(x.teachers && x.teachers.name) || "Učitel"}),
+            el("span",{class:"small bio1",text:x.comment}), el("span",{class:"muted small",text:(x.subject ? x.subject+" · " : "")+fmtDate(x.updated_at)})]),
+          el("span",{class:"stars",text:starsText(x.stars)})
+        ]);
+      })) : el("p",{class:"muted",text:"Zatím žádné."}),
+    P.priv ? el("h2",{text: me ? "Koupené" : "Koupil(a)"}) : null,
+    P.priv ? ((P.bought.length || P.boughtM.length) ? el("div",{class:"cards"}, P.bought.map(function(q){ return quizCard(q, true); }).concat(P.boughtM.map(function(m){ return materialCard(m, true); })))
                               : el("p",{class:"muted",text:"Zatím nic."})) : null,
     P.priv ? el("h2",{text:"Historie kreditů"}) : null,
     P.priv ? (P.log.length ? el("ul",{class:"history"}, P.log.map(function(x){
@@ -799,12 +846,16 @@ function openAdmin(){
   var cnt = function(t, f){ var q = sb.from(t).select("*",{count:"exact",head:true}); return f ? f(q) : q; };
   Promise.all([
     cnt("profiles"), cnt("quizzes"), cnt("purchases"), cnt("plays"),
-    sb.from("reports").select("id,reason,created_at,quiz_id,reporter_id,quizzes(title,author_id),profiles!reports_reporter_id_fkey(nickname)").eq("status","open").order("created_at",{ascending:false}).limit(200),
-    sb.from("profiles").select("id,nickname,credits,is_admin,created_at,avatar_v").order("credits",{ascending:false}).limit(1000)
+    sb.from("reports").select("id,reason,created_at,quiz_id,material_id,review_teacher_id,review_user_id,reporter_id,quizzes(title,author_id),materials(title),profiles!reports_reporter_id_fkey(nickname)").eq("status","open").order("created_at",{ascending:false}).limit(200),
+    sb.from("profiles").select("id,nickname,credits,is_admin,created_at,avatar_v").order("credits",{ascending:false}).limit(1000),
+    cnt("materials"), cnt("teachers"), cnt("teacher_reviews"),
+    sb.from("teachers").select("id,name").limit(1000)
   ]).then(function(r){
     var e = r.map(function(x){ return x.error; }).filter(Boolean)[0];
     S.adm = e ? {error:dbErrText(e)} : {users:r[0].count||0, quizzes:r[1].count||0, purchases:r[2].count||0, plays:r[3].count||0,
-      reports:r[4].data||[], people:r[5].data||[], userQ:""};
+      reports:r[4].data||[], people:r[5].data||[], userQ:"",
+      materials:r[6].count||0, teachers:r[7].count||0, reviews:r[8].count||0,
+      tnames:(r[9].data||[]).reduce(function(o,t){ o[t.id] = t.name; return o; }, {})};
     if (!e) S.openReports = S.adm.reports.length;
     if (S.view === "admin") render();
   });
@@ -833,26 +884,42 @@ function adminView(){
 
   return [
     el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Správa"}), el("h1",{text:"Přehled webu"})]), el("button",{class:"btn ghost",text:"Obnovit",onclick:function(){ openAdmin(); render(); }})]),
-    el("dl",{class:"stats five"},[
+    el("dl",{class:"stats"},[
       el("div",{},[el("dt",{text:"Uživatelé"}), el("dd",{text:String(A.users)})]),
       el("div",{},[el("dt",{text:"Kvízy"}), el("dd",{text:String(A.quizzes)})]),
       el("div",{},[el("dt",{text:"Nákupy"}), el("dd",{text:String(A.purchases)})]),
       el("div",{},[el("dt",{text:"Odehráno"}), el("dd",{text:String(A.plays)})]),
+      el("div",{},[el("dt",{text:"Materiály"}), el("dd",{text:String(A.materials)})]),
+      el("div",{},[el("dt",{text:"Učitelé"}), el("dd",{text:String(A.teachers)})]),
+      el("div",{},[el("dt",{text:"Recenze"}), el("dd",{text:String(A.reviews)})]),
       el("div",{},[el("dt",{text:"Kredity v oběhu"}), el("dd",{text:String(credits)})])
     ]),
     msgEl(),
-    el("h2",{text:"Nahlášené kvízy ("+A.reports.length+")"}),
+    el("h2",{text:"Nahlášený obsah ("+A.reports.length+")"}),
     A.reports.length ? el("ul",{class:"reports"}, A.reports.map(function(rep){
-      var title = (rep.quizzes && rep.quizzes.title) || "Smazaný kvíz";
+      var kind = rep.quiz_id ? "Kvíz" : rep.material_id ? "Materiál" : "Recenze učitele";
+      var title = rep.quiz_id ? ((rep.quizzes && rep.quizzes.title) || "Smazaný kvíz")
+                : rep.material_id ? ((rep.materials && rep.materials.title) || "Smazaný materiál")
+                : (A.tnames[rep.review_teacher_id] || "Učitel");
+      var href = rep.quiz_id ? "#q/"+rep.quiz_id : rep.material_id ? "#m/"+rep.material_id : "#t/"+rep.review_teacher_id;
+      var delBtn = rep.quiz_id ? el("button",{class:"btn sm danger-btn",text:"Smazat kvíz",onclick:function(e){ confirmDelete(e.currentTarget, rep.quiz_id); }})
+        : rep.material_id ? el("button",{class:"btn sm danger-btn",text:"Smazat materiál",onclick:function(e){
+            var b = e.currentTarget; if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu smazat?"; return; }
+            sb.from("materials").delete().eq("id", rep.material_id).then(function(r){ if (r.error) return err("err", dbErrText(r.error)); openAdmin(); S.msg = {kind:"ok", text:"Materiál smazán."}; render(); });
+          }})
+        : el("button",{class:"btn sm danger-btn",text:"Smazat recenzi",onclick:function(e){
+            var b = e.currentTarget; if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu smazat?"; return; }
+            sb.from("teacher_reviews").delete().eq("teacher_id", rep.review_teacher_id).eq("user_id", rep.review_user_id).then(function(r){ if (r.error) return err("err", dbErrText(r.error)); openAdmin(); S.msg = {kind:"ok", text:"Recenze smazána."}; render(); });
+          }});
       return el("li",{class:"panel"},[
         el("div",{class:"row",style:"justify-content:space-between"},[
-          el("a",{class:"plink",href:"#q/"+rep.quiz_id,text:title}),
+          el("span",{class:"row",style:"gap:8px"},[el("span",{class:"pill kind",text:kind}), el("a",{class:"plink",href:href,text:title})]),
           el("span",{class:"muted small",text:fmtDate(rep.created_at)})
         ]),
         el("p",{class:"reason",text:"„"+rep.reason+"“"}),
         el("span",{class:"muted small"},["Nahlásil(a) ", profileLink(rep.reporter_id, rep.profiles && rep.profiles.nickname)]),
         el("div",{class:"row"},[
-          el("button",{class:"btn sm danger-btn",text:"Smazat kvíz",onclick:function(e){ confirmDelete(e.currentTarget, rep.quiz_id); }}),
+          delBtn,
           el("button",{class:"btn sm",text:"Vyřešeno",onclick:function(e){ resolveReport(rep, "resolved", e.currentTarget); }}),
           el("button",{class:"btn ghost sm",text:"Zamítnout",onclick:function(e){ resolveReport(rep, "dismissed", e.currentTarget); }})
         ])
@@ -884,7 +951,7 @@ function openQuiz(id, then){
     if (e) return err("err", dbErrText(e));
     var q = r[0].data, c = r[1].data;
     if (!c){
-      if (!canOpen(q)){ S.buyFor = q; go("buy"); return; }
+      if (!canOpen(q)){ S.buyFor = {type:"quiz", item:q}; go("buy"); return; }
       return err("err","Otázky tohohle kvízu se nepovedlo načíst.");
     }
     q.questions = c.questions; q.enc = c.enc;
@@ -1270,17 +1337,560 @@ function saveQuiz(btn){
   });
 }
 
+
+/* =========================================================
+   Procházení: záložky Kvízy / Materiály / Učitelé
+   ========================================================= */
+var MAT_COLS = "id,title,subject,tags,description,kind,file_name,file_size,price,download_count,updated_at,author_id,profiles!materials_author_id_fkey(nickname,avatar_v)";
+var KIND_LABEL = {file:"Soubor", link:"Odkaz", text:"Text"};
+
+function browseTabs(){
+  function t(href, key, text){ return el("a",{href:href, class:"tab", "aria-current": S.tab === key ? "page" : null, text:text}); }
+  return el("nav",{class:"tabs browse","aria-label":"Co procházet"},[ t("#kvizy","quizzes","Kvízy"), t("#materialy","materials","Materiály"), t("#ucitele","teachers","Učitelé") ]);
+}
+
+function loadMaterials(){
+  return sb.from("materials").select(MAT_COLS).order("updated_at",{ascending:false}).limit(500).then(function(r){
+    S.materials = r.error ? {error:dbErrText(r.error)} : {rows:r.data || []};
+    if (S.view === "home") render();
+  });
+}
+function loadTeachers(){
+  return sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at").order("name").limit(1000).then(function(r){
+    S.teachers = r.error ? {error:dbErrText(r.error)} : {rows:r.data || []};
+    if (S.view === "home" || S.view === "revform") render();
+  });
+}
+function loadOwnedM(){
+  return sb.from("material_purchases").select("material_id").eq("buyer_id", S.me).then(function(r){
+    var o = {}; (r.data || []).forEach(function(p){ o[p.material_id] = true; }); S.ownedM = o;
+  });
+}
+function canOpenM(m){ return !m.price || m.author_id === S.me || !!S.ownedM[m.id] || isAdmin(); }
+function fmtSize(b){ if (!b) return ""; return b < 1048576 ? Math.max(1, Math.round(b / 1024))+" kB" : (b / 1048576).toFixed(1).replace(".", ",")+" MB"; }
+
+function materialCard(m, showAuthor){
+  var mine = m.author_id === S.me, owned = !!S.ownedM[m.id];
+  var card = el("a",{class:"card",href:"#m/"+m.id},[
+    el("span",{class:"txt"},[
+      el("span",{class:"row",style:"gap:6px"},[
+        m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
+        el("span",{class:"pill kind",text:KIND_LABEL[m.kind] || "Materiál"}),
+        m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
+        mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null,
+        owned && !mine ? el("span",{class:"pill mine",text:"Koupeno"}) : null
+      ]),
+      el("strong",{text:m.title}),
+      m.description ? el("span",{class:"small bio1",text:m.description}) : null,
+      el("span",{class:"muted small",text:(m.kind === "file" && m.file_name ? m.file_name+(m.file_size ? " · "+fmtSize(m.file_size) : "")+" · " : "")+"otevřeno "+(m.download_count||0)+"× · "+fmtDate(m.updated_at)}),
+      (m.tags && m.tags.length) ? el("span",{class:"tags"}, m.tags.map(function(t){ return el("span",{class:"tag",text:"#"+t}); })) : null
+    ]),
+    el("span",{class:"go",text: canOpenM(m) ? "Otevřít" : "Koupit"})
+  ]);
+  var meta = showAuthor ? el("div",{class:"cardmeta"},[el("span",{class:"by small muted"},[avatarEl(m.author_id, m.profiles, "xs"), profileLink(m.author_id, authorOf(m))])]) : null;
+  return el("div",{class:"cardwrap"},[card, meta]);
+}
+
+function materialsBrowse(){
+  var M = S.materials;
+  var f = S.mFilter.trim().toLowerCase().replace(/^#/, "");
+  var rows = (M && M.rows) || [];
+  var subjects = {}; rows.forEach(function(m){ if (m.subject) subjects[m.subject] = true; });
+  var shown = rows.filter(function(m){
+    if (S.mSubject && m.subject !== S.mSubject) return false;
+    if (S.mKind && m.kind !== S.mKind) return false;
+    if (!f) return true;
+    return m.title.toLowerCase().indexOf(f) >= 0 || authorOf(m).toLowerCase().indexOf(f) >= 0 || (m.subject||"").toLowerCase().indexOf(f) >= 0
+      || (m.description||"").toLowerCase().indexOf(f) >= 0 || (m.tags||[]).some(function(t){ return t.indexOf(f) >= 0; });
+  });
+  if (S.mSort === "popular") shown = shown.slice().sort(function(a,b){ return (b.download_count||0) - (a.download_count||0); });
+  if (S.mSort === "cheap") shown = shown.slice().sort(function(a,b){ return (a.price||0) - (b.price||0); });
+  var search = el("input",{type:"search",id:"m-search",placeholder:"Hledat materiál, autora nebo #štítek","aria-label":"Hledat materiály",oninput:function(e){ S.mFilter = e.target.value; render(); }});
+  search.value = S.mFilter;
+  var subj = el("select",{id:"m-subject","aria-label":"Předmět",onchange:function(e){ S.mSubject = e.target.value; render(); }},
+    [el("option",{value:"",text:"Všechny předměty"})].concat(Object.keys(subjects).sort().map(function(s){ return el("option",{value:s,text:s}); })));
+  subj.value = S.mSubject;
+  var kind = el("select",{id:"m-kind","aria-label":"Druh",onchange:function(e){ S.mKind = e.target.value; render(); }},[
+    el("option",{value:"",text:"Všechny druhy"}), el("option",{value:"file",text:"Soubory"}), el("option",{value:"link",text:"Odkazy"}), el("option",{value:"text",text:"Texty"})]);
+  kind.value = S.mKind;
+  var sort = el("select",{id:"m-sort","aria-label":"Řazení",onchange:function(e){ S.mSort = e.target.value; render(); }},[
+    el("option",{value:"new",text:"Nejnovější"}), el("option",{value:"popular",text:"Nejotevíranější"}), el("option",{value:"cheap",text:"Nejlevnější"})]);
+  sort.value = S.mSort;
+  var body = !M ? el("p",{class:"muted",text:"Načítám materiály…"})
+    : M.error ? el("p",{class:"msg err",text:M.error})
+    : shown.length ? el("div",{class:"cards"}, shown.map(function(m){ return materialCard(m, true); }))
+    : el("p",{class:"muted",text: rows.length ? "Nic takového tu není." : "Zatím tu nikdo nenahrál žádný materiál. Buď první přes Přidat → Materiál."});
+  return [
+    el("div",{class:"top"},[
+      el("div",{},[el("span",{class:"label",text:"Procházet"}), el("h1",{text:"Studijní materiály"})]),
+      el("a",{class:"btn",href:"#pridat/material",text:"Přidat materiál"})
+    ]),
+    browseTabs(),
+    msgEl(),
+    el("div",{class:"filters four"},[search, subj, kind, sort]),
+    body
+  ];
+}
+
+function teacherCard(t){
+  return el("a",{class:"card teacher",href:"#t/"+t.id},[
+    el("span",{class:"avatar","aria-hidden":"true",text:t.name.replace(/^(?:(?:doc|prof|ing|mgr|bc|rndr|phdr|judr|mudr|ph\.d|csc|drsc|dr)\.?\s+)+/i, "").charAt(0).toUpperCase()}),
+    el("span",{class:"txt"},[
+      el("strong",{text:t.name}),
+      t.department ? el("span",{class:"muted small",text:t.department}) : null,
+      el("span",{class:"small"},[el("span",{class: t.rating_count ? "stars" : "muted",text: t.rating_count ? starsText(t.rating_avg)+" "+Number(t.rating_avg).toFixed(1).replace(".", ",") : "Bez recenzí"}),
+        t.rating_count ? el("span",{class:"muted",text:" · "+t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")}) : null])
+    ]),
+    el("span",{class:"go",text:"Recenze"})
+  ]);
+}
+
+function teachersBrowse(){
+  var T = S.teachers, rows = (T && T.rows) || [], f = S.tFilter.trim().toLowerCase();
+  var shown = f ? rows.filter(function(t){ return t.name.toLowerCase().indexOf(f) >= 0 || (t.department||"").toLowerCase().indexOf(f) >= 0; }) : rows.slice();
+  if (S.tSort === "best") shown.sort(function(a,b){ return (Number(b.rating_avg)||0) - (Number(a.rating_avg)||0) || b.rating_count - a.rating_count; });
+  if (S.tSort === "most") shown.sort(function(a,b){ return b.rating_count - a.rating_count; });
+  var search = el("input",{type:"search",id:"t-search",placeholder:"Hledat učitele nebo katedru","aria-label":"Hledat učitele",oninput:function(e){ S.tFilter = e.target.value; render(); }});
+  search.value = S.tFilter;
+  var sort = el("select",{id:"t-sort","aria-label":"Řazení",onchange:function(e){ S.tSort = e.target.value; render(); }},[
+    el("option",{value:"name",text:"Podle jména"}), el("option",{value:"best",text:"Nejlépe hodnocení"}), el("option",{value:"most",text:"Nejvíc recenzí"})]);
+  sort.value = S.tSort;
+  var body = !T ? el("p",{class:"muted",text:"Načítám učitele…"})
+    : T.error ? el("p",{class:"msg err",text:T.error})
+    : shown.length ? el("div",{class:"cards"}, shown.map(teacherCard))
+    : el("p",{class:"muted",text: rows.length ? "Takového učitele tu nemáme. Přidej ho přes Napsat recenzi." : "Zatím tu není žádná recenze. Napiš první."});
+  return [
+    el("div",{class:"top"},[
+      el("div",{},[el("span",{class:"label",text:"Procházet"}), el("h1",{text:"Recenze učitelů"})]),
+      el("a",{class:"btn",href:"#pridat/recenze",text:"Napsat recenzi"})
+    ]),
+    browseTabs(),
+    msgEl(),
+    el("div",{class:"filters two"},[search, sort]),
+    body,
+    el("p",{class:"muted small",text:"Piš věcně a slušně: jak vysvětluje, jaké jsou zkoušky, co bys poradil spolužákům. Urážky správce smaže."})
+  ];
+}
+
+/* =========================================================
+   Detail materiálu
+   ========================================================= */
+var matSeq = 0;
+function openMaterial(id){
+  var seq = ++matSeq;
+  S.mat = {id:id, loading:true};
+  Promise.all([
+    sb.from("materials").select(MAT_COLS).eq("id", id).maybeSingle(),
+    sb.from("material_content").select("body,url,file_path").eq("material_id", id).maybeSingle()
+  ]).then(function(r){
+    if (seq !== matSeq) return;
+    var e = r[0].error || r[1].error;
+    S.mat = e ? {id:id, error:dbErrText(e)} : {id:id, m:r[0].data, c:r[1].data, showText:false, reporting:false};
+    if (S.view === "mdetail") render();
+  });
+}
+
+function openMaterialContent(M, btn){
+  var m = M.m, c = M.c;
+  if (!c) return err("err","Obsah materiálu se nepovedlo načíst.");
+  sb.rpc("count_material_open",{p_material:m.id});
+  if (m.kind === "text"){ M.showText = true; render(); return; }
+  if (m.kind === "link"){ window.open(c.url, "_blank", "noopener"); return; }
+  btn.disabled = true; btn.textContent = "Připravuju stažení…";
+  sb.storage.from("materials").createSignedUrl(c.file_path, 120, {download: m.file_name || true}).then(function(r){
+    btn.disabled = false; btn.textContent = "Stáhnout soubor";
+    if (r.error) return err("err", dbErrText(r.error));
+    var a = el("a",{href:r.data.signedUrl, rel:"noopener"}); document.body.appendChild(a); a.click(); a.remove();
+  });
+}
+
+function materialDetailView(){
+  var M = S.mat || {};
+  if (M.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám materiál…"})])];
+  if (M.error) return [el("p",{class:"msg err",text:M.error})];
+  if (!M.m) return [el("div",{class:"panel"},[el("h2",{text:"Tenhle materiál neexistuje"}), el("p",{},[el("a",{href:"#materialy",class:"plink",text:"Zpět na materiály"})])])];
+  var m = M.m, mine = m.author_id === S.me, open = canOpenM(m);
+  var openBtn = open ? el("button",{class:"btn",text: m.kind === "file" ? "Stáhnout soubor" : m.kind === "link" ? "Otevřít odkaz" : "Zobrazit text",onclick:function(e){ openMaterialContent(M, e.currentTarget); }})
+                     : el("button",{class:"btn",text:"Koupit za "+kr(m.price),onclick:function(){ S.buyFor = {type:"material", item:m}; go("buy"); }});
+  var head = el("section",{class:"panel detail"},[
+    el("span",{class:"row",style:"gap:6px"},[
+      m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
+      el("span",{class:"pill kind",text:KIND_LABEL[m.kind]}),
+      m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
+      S.ownedM[m.id] && !mine ? el("span",{class:"pill mine",text:"Koupeno"}) : null
+    ]),
+    el("h1",{text:m.title}),
+    el("span",{class:"by muted"},[avatarEl(m.author_id, m.profiles, "sm"), "Autor: ", profileLink(m.author_id, authorOf(m)), " · "+fmtDate(m.updated_at)]),
+    (m.tags && m.tags.length) ? el("span",{class:"tags"}, m.tags.map(function(t){ return el("button",{class:"tag",type:"button",text:"#"+t,onclick:function(){ S.mFilter = "#"+t; nav("#materialy"); }}); })) : null,
+    m.description ? el("p",{class:"desc",text:m.description}) : null,
+    el("p",{class:"muted small",text:(m.kind === "file" && m.file_name ? "Soubor "+m.file_name+(m.file_size ? " ("+fmtSize(m.file_size)+")" : "")+" · " : "")+"otevřeno "+(m.download_count||0)+"×"}),
+    msgEl(),
+    el("div",{class:"row"},[
+      openBtn,
+      mine ? el("a",{class:"btn ghost",href:"#m/"+m.id+"/upravit",text:"Upravit"}) : null,
+      (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDeleteMaterial(e.currentTarget, m, M.c); }}) : null
+    ])
+  ]);
+  var text = M.showText && M.c ? el("section",{class:"panel"},[el("h2",{text:"Text materiálu"}), el("div",{class:"mattext",text:M.c.body || ""})]) : null;
+  return [
+    el("div",{},[el("a",{href:"#materialy",class:"plink small",text:"← Všechny materiály"})]),
+    head, text,
+    mine ? null : genericReport(M, "material_id", m.id, "materiál")
+  ];
+}
+
+function confirmDeleteMaterial(btn, m, c){
+  if (!btn.dataset.armed){
+    var label = btn.textContent; btn.dataset.armed = "1"; btn.textContent = "Opravdu smazat?";
+    setTimeout(function(){ if (btn.isConnected){ delete btn.dataset.armed; btn.textContent = label; } }, 4000);
+    return;
+  }
+  btn.disabled = true;
+  var rmFile = c && c.file_path ? sb.storage.from("materials").remove([c.file_path]) : Promise.resolve();
+  rmFile.then(function(){ return sb.from("materials").delete().eq("id", m.id); }).then(function(r){
+    if (r.error){ btn.disabled = false; return err("err", dbErrText(r.error)); }
+    if (S.materials && S.materials.rows) S.materials.rows = S.materials.rows.filter(function(x){ return x.id !== m.id; });
+    S.msg = {kind:"ok", text:"Materiál smazán."};
+    nav("#materialy", true);
+  });
+}
+
+/* Společný formulář pro nahlášení (kvíz má svůj, tohle je pro materiál a recenze). */
+function genericReport(holder, field, value, what, extra){
+  var key = "report-" + (extra ? extra.review_user_id : value);
+  if (holder.reporting !== key) return el("div",{},[el("button",{class:"btn link small danger-link",text:"Nahlásit "+what,onclick:function(){ holder.reporting = key; S.msg = null; render(); focusLater(key); }}), msgEl(key)]);
+  var ta = el("textarea",{id:key,maxlength:"500",style:"min-height:80px",placeholder:"Napiš, co je špatně."});
+  var send = el("button",{class:"btn",type:"submit",text:"Odeslat nahlášení"});
+  return el("form",{class:"panel report",onsubmit:function(e){
+    e.preventDefault();
+    var t = ta.value.trim();
+    if (t.length < 3) return err("err","Napiš aspoň pár slov, co je špatně.", key);
+    send.disabled = true;
+    var row = {reason:t}; row[field] = value; if (extra) Object.assign(row, extra);
+    sb.from("reports").insert(row).then(function(r){
+      if (r.error){ send.disabled = false; return err("err", /duplicate|unique/i.test(r.error.message||"") ? "Tohle už jsi nahlásil. Správce se na to podívá." : dbErrText(r.error), key); }
+      holder.reporting = false;
+      err("ok","Nahlášeno. Správce se na to podívá.", key);
+    });
+  }},[
+    el("label",{class:"label",for:key,text:"Proč to hlásíš"}), ta, msgEl(key),
+    el("div",{class:"row"},[send, el("button",{class:"btn ghost",type:"button",text:"Zrušit",onclick:function(){ holder.reporting = false; S.msg = null; render(); }})])
+  ]);
+}
+
+/* =========================================================
+   Přidat / upravit materiál
+   ========================================================= */
+var ALLOWED_EXT = /\.(pdf|docx?|pptx?|xlsx?|odt|odp|ods|txt|md|png|jpe?g|webp|zip)$/i;
+function openMaterialEditor(id){
+  if (!id){
+    S.medit = {id:null, title:"", subject:"", tags:"", description:"", price:0, kind:"file", url:"", body:"", file:null, oldPath:null, oldName:null};
+    return;
+  }
+  S.medit = {loading:true};
+  Promise.all([
+    sb.from("materials").select(MAT_COLS).eq("id", id).maybeSingle(),
+    sb.from("material_content").select("body,url,file_path").eq("material_id", id).maybeSingle()
+  ]).then(function(r){
+    var m = r[0].data, c = r[1].data || {};
+    if (r[0].error || r[1].error || !m){ S.medit = {error: r[0].error || r[1].error ? dbErrText(r[0].error || r[1].error) : "Materiál neexistuje."}; }
+    else if (m.author_id !== S.me){ S.medit = {error:"Upravovat můžeš jen svoje materiály."}; }
+    else S.medit = {id:m.id, title:m.title, subject:m.subject||"", tags:(m.tags||[]).join(", "), description:m.description||"", price:m.price||0,
+                    kind:m.kind, url:c.url||"", body:c.body||"", file:null, oldPath:c.file_path||null, oldName:m.file_name, oldSize:m.file_size};
+    if (S.view === "medit") render();
+  });
+}
+
+function subjectInput(id, value, onin){
+  var subjects = {}; SUBJECTS.forEach(function(s){ subjects[s] = true; });
+  S.quizzes.forEach(function(q){ if (q.subject) subjects[q.subject] = true; });
+  ((S.materials && S.materials.rows) || []).forEach(function(m){ if (m.subject) subjects[m.subject] = true; });
+  var inp = el("input",{type:"text",id:id,maxlength:"40",list:id+"-list",placeholder:"Vyber nebo napiš předmět",oninput:onin});
+  inp.value = value;
+  return [inp, el("datalist",{id:id+"-list"}, Object.keys(subjects).sort().map(function(s){ return el("option",{value:s}); }))];
+}
+
+function materialEditView(){
+  var D = S.medit || {};
+  if (D.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám…"})])];
+  if (D.error) return [el("p",{class:"msg err",text:D.error})];
+  function inp(id, key, attrs){ var x = el("input", Object.assign({id:id, oninput:function(e){ D[key] = e.target.value; }}, attrs)); x.value = D[key]; return x; }
+  var kinds = el("div",{class:"tabs",role:"radiogroup","aria-label":"Druh materiálu"}, ["file","link","text"].map(function(k){
+    return el("button",{type:"button",class:"tab",role:"radio","aria-checked":String(D.kind === k),"aria-pressed":String(D.kind === k),text:{file:"Soubor",link:"Odkaz",text:"Text"}[k],onclick:function(){ D.kind = k; render(); }});
+  }));
+  var fileIn = el("input",{type:"file",id:"mat-file"});
+  fileIn.hidden = true;
+  fileIn.addEventListener("change", function(){
+    var f = fileIn.files && fileIn.files[0]; if (!f) return;
+    if (f.size > 20971520) return err("err","Soubor je větší než 20 MB.","mat");
+    if (!ALLOWED_EXT.test(f.name)) return err("err","Tenhle typ souboru nejde nahrát. Použij PDF, Word, PowerPoint, Excel, obrázek, TXT nebo ZIP.","mat");
+    D.file = f; if (!D.title.trim()) D.title = f.name.replace(/\.[^.]+$/, "").slice(0, 100);
+    S.msg = null; render();
+  });
+  var kindField = D.kind === "file" ? el("div",{class:"field"},[
+      el("span",{class:"label",text:"Soubor (max 20 MB)"}),
+      el("div",{class:"row"},[
+        el("label",{class:"btn ghost",for:"mat-file",tabindex:"0",role:"button",text: D.file || D.oldPath ? "Vybrat jiný soubor" : "Vybrat soubor",onkeydown:function(e){ if (e.key==="Enter"||e.key===" "){ e.preventDefault(); fileIn.click(); } }}),
+        fileIn,
+        el("span",{class:"small muted",text: D.file ? D.file.name+" ("+fmtSize(D.file.size)+")" : D.oldPath ? "Nahráno: "+D.oldName : "Zatím nic"})
+      ]),
+      el("p",{class:"muted small",text:"PDF, Word, PowerPoint, Excel, obrázky, TXT nebo ZIP."})
+    ])
+    : D.kind === "link" ? el("div",{class:"field"},[el("label",{class:"label",for:"mat-url",text:"Odkaz"}), inp("mat-url","url",{type:"url",maxlength:"500",placeholder:"https://…"}),
+        el("p",{class:"muted small",text:"Třeba sdílená složka na Google Disku nebo OneDrive. U placeného materiálu odkaz uvidí jen ten, kdo zaplatí."})])
+    : el("div",{class:"field"},[el("label",{class:"label",for:"mat-body",text:"Text"}),
+        (function(){ var t = el("textarea",{id:"mat-body",maxlength:"50000",style:"min-height:260px",placeholder:"Sem napiš nebo vlož výpisky.",oninput:function(e){ D.body = e.target.value; }}); t.value = D.body; return t; })()]);
+  var desc = el("textarea",{id:"mat-desc",maxlength:"2000",style:"min-height:90px",placeholder:"Co v materiálu je, z jaké přednášky, pro jaký ročník…",oninput:function(e){ D.description = e.target.value; }});
+  desc.value = D.description;
+  var save = el("button",{class:"btn",text: D.id ? "Uložit změny" : "Zveřejnit materiál",onclick:function(){ saveMaterial(save); }});
+  return [
+    el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Přidat"}), el("h1",{text: D.id ? "Upravit materiál" : "Nový materiál"})]), el("a",{class:"plink",href: D.id ? "#m/"+D.id : "#materialy",text:"Zpět bez uložení"})]),
+    el("div",{class:"panel"},[
+      el("div",{class:"field"},[el("label",{class:"label",for:"mat-title",text:"Název"}), inp("mat-title","title",{type:"text",maxlength:"100",placeholder:"Např. Výpisky z genetiky – 3. přednáška"})]),
+      el("div",{class:"field"},[el("span",{class:"label",text:"Druh"}), kinds]),
+      kindField,
+      el("div",{class:"field"},[el("label",{class:"label",for:"mat-desc",text:"Popis (nepovinný)"}), desc]),
+      el("div",{class:"grid2 even"},[
+        el("div",{class:"field"},[el("label",{class:"label",for:"mat-subject",text:"Předmět"})].concat(subjectInput("mat-subject", D.subject, function(e){ D.subject = e.target.value; }))),
+        el("div",{class:"field"},[el("label",{class:"label",for:"mat-tags",text:"Štítky"}), inp("mat-tags","tags",{type:"text",maxlength:"120",placeholder:"Např. zkouška, výpisky"})])
+      ]),
+      el("div",{class:"field",style:"max-width:240px"},[el("label",{class:"label",for:"mat-price",text:"Cena v kreditech"}), inp("mat-price","price",{type:"number",min:"0",max:"10000",step:"1",inputmode:"numeric"}), el("p",{class:"muted small",text:"0 = zdarma."})]),
+      msgEl("mat"),
+      el("div",{class:"row"},[save])
+    ])
+  ];
+}
+
+function safeFileName(n){
+  var dot = n.lastIndexOf("."), ext = dot > 0 ? n.slice(dot).toLowerCase() : "";
+  var base = (dot > 0 ? n.slice(0, dot) : n).normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "soubor";
+  return base + ext.replace(/[^a-z0-9.]/g, "");
+}
+
+function saveMaterial(btn){
+  var D = S.medit;
+  if (!D.title.trim()){ err("err","Dej materiálu název.","mat"); return focusLater("mat-title"); }
+  var price = Number(D.price);
+  if (!Number.isInteger(price) || price < 0 || price > 10000){ err("err","Cena musí být celé číslo od 0 do 10 000.","mat"); return focusLater("mat-price"); }
+  if (D.kind === "file" && !D.file && !D.oldPath) return err("err","Vyber soubor, který chceš nahrát.","mat");
+  if (D.kind === "link" && !/^https?:\/\/\S+$/i.test(D.url.trim())){ err("err","Vlož celý odkaz začínající https://","mat"); return focusLater("mat-url"); }
+  if (D.kind === "text" && D.body.trim().length < 10){ err("err","Napiš aspoň pár vět textu.","mat"); return focusLater("mat-body"); }
+  var tags = parseTags(D.tags);
+  if (tags.length > 5) return err("err","Štítků může být nejvíc 5.","mat");
+  btn.disabled = true; btn.textContent = "Ukládám…";
+  var row = {title:D.title.trim(), subject:D.subject.trim().slice(0,40) || null, tags:tags, description:D.description.trim() || null,
+             kind:D.kind, price:price, updated_at:new Date().toISOString(),
+             file_name: D.kind === "file" ? (D.file ? D.file.name.slice(0,200) : D.oldName) : null,
+             file_size: D.kind === "file" ? (D.file ? D.file.size : D.oldSize || null) : null};
+  var created = false, id;
+  var saveRow = D.id ? sb.from("materials").update(row).eq("id", D.id).then(function(r){ if (r.error) throw r.error; return D.id; })
+                     : sb.from("materials").insert(row).select("id").single().then(function(r){ if (r.error) throw r.error; created = true; return r.data.id; });
+  saveRow.then(function(mid){
+    id = mid;
+    if (D.kind !== "file" || !D.file) return D.kind === "file" ? D.oldPath : null;
+    btn.textContent = "Nahrávám soubor…";
+    var path = S.me + "/" + id + "/" + safeFileName(D.file.name);
+    return sb.storage.from("materials").upload(path, D.file, {upsert:true, contentType:D.file.type || "application/octet-stream"}).then(function(r){
+      if (r.error) throw r.error;
+      if (D.oldPath && D.oldPath !== path) sb.storage.from("materials").remove([D.oldPath]);
+      return path;
+    });
+  }).then(function(path){
+    if (D.kind !== "file" && D.oldPath) sb.storage.from("materials").remove([D.oldPath]);
+    var c = {material_id:id, body: D.kind === "text" ? D.body : null, url: D.kind === "link" ? D.url.trim() : null, file_path: D.kind === "file" ? path : null};
+    return sb.from("material_content").upsert(c, {onConflict:"material_id"}).then(function(r){ if (r.error) throw r.error; });
+  }).then(function(){
+    S.materials = null;
+    S.msg = {kind:"ok", text:"Materiál „"+D.title.trim()+"“ je uložený."};
+    nav("#m/"+id, true);
+  }).catch(function(e){
+    if (created && id) sb.from("materials").delete().eq("id", id);
+    btn.disabled = false; btn.textContent = D.id ? "Uložit změny" : "Zveřejnit materiál";
+    err("err", /Bucket not found/i.test((e && e.message) || "") ? "Úložiště materiálů ještě není nastavené. Spusť znovu supabase-setup.sql." :
+               /exceeded the maximum allowed size|Payload too large/i.test((e && e.message) || "") ? "Soubor je moc velký (max 20 MB)." : dbErrText(e), "mat");
+  });
+}
+
+/* =========================================================
+   Učitel a recenze
+   ========================================================= */
+var tchSeq = 0;
+function openTeacher(id){
+  var seq = ++tchSeq;
+  S.tch = {id:id, loading:true};
+  Promise.all([
+    sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at").eq("id", id).maybeSingle(),
+    sb.from("teacher_reviews").select("teacher_id,user_id,stars,subject,comment,updated_at,profiles!teacher_reviews_user_id_fkey(nickname,avatar_v)").eq("teacher_id", id).order("updated_at",{ascending:false}).limit(300)
+  ]).then(function(r){
+    if (seq !== tchSeq) return;
+    var e = r[0].error || r[1].error;
+    S.tch = e ? {id:id, error:dbErrText(e)} : {id:id, t:r[0].data, reviews:r[1].data || [], reporting:false};
+    if (S.view === "tdetail") render();
+  });
+}
+
+function teacherDetailView(){
+  var T = S.tch || {};
+  if (T.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám…"})])];
+  if (T.error) return [el("p",{class:"msg err",text:T.error})];
+  if (!T.t) return [el("div",{class:"panel"},[el("h2",{text:"Tenhle učitel tu není"}), el("p",{},[el("a",{href:"#ucitele",class:"plink",text:"Zpět na učitele"})])])];
+  var t = T.t, mine = T.reviews.find(function(x){ return x.user_id === S.me; });
+  var dist = [5,4,3,2,1].map(function(s){ var n = T.reviews.filter(function(x){ return x.stars === s; }).length;
+    return el("div",{class:"distrow"},[el("span",{text:s+"★"}), el("span",{class:"distbar"},[el("i",{style:"width:"+(T.reviews.length ? n / T.reviews.length * 100 : 0)+"%"})]), el("span",{class:"muted small",text:String(n)})]); });
+  return [
+    el("div",{},[el("a",{href:"#ucitele",class:"plink small",text:"← Všichni učitelé"})]),
+    el("section",{class:"panel detail"},[
+      el("span",{class:"label",text:"Učitel"}),
+      el("h1",{text:t.name}),
+      t.department ? el("p",{class:"muted",text:t.department}) : null,
+      el("div",{class:"tsummary"},[
+        el("div",{},[el("div",{class:"big",text: t.rating_count ? Number(t.rating_avg).toFixed(1).replace(".", ",") : "–"}), el("div",{class:"stars",text:starsText(t.rating_avg)}),
+          el("div",{class:"muted small",text:t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")})]),
+        el("div",{class:"dist"}, dist)
+      ]),
+      msgEl(),
+      el("div",{class:"row"},[
+        el("a",{class:"btn",href:"#pridat/recenze/"+t.id,text: mine ? "Upravit moji recenzi" : "Napsat recenzi"}),
+        isAdmin() ? el("button",{class:"btn ghost danger-btn",text:"Smazat učitele (správce)",onclick:function(e){
+          var b = e.currentTarget;
+          if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu smazat i se všemi recenzemi?"; return; }
+          sb.from("teachers").delete().eq("id", t.id).then(function(r){
+            if (r.error) return err("err", dbErrText(r.error));
+            S.teachers = null; S.msg = {kind:"ok", text:"Učitel smazán."}; nav("#ucitele", true);
+          });
+        }}) : null
+      ])
+    ]),
+    el("section",{class:"panel"},[
+      el("h2",{text:"Recenze"}),
+      T.reviews.length ? el("ul",{class:"reviews"}, T.reviews.map(function(x){
+        var own = x.user_id === S.me;
+        return el("li",{},[
+          avatarEl(x.user_id, x.profiles, "sm"),
+          el("div",{class:"txt"},[
+            el("div",{class:"row",style:"gap:8px"},[profileLink(x.user_id, x.profiles && x.profiles.nickname), el("span",{class:"stars",text:starsText(x.stars)}),
+              x.subject ? el("span",{class:"pill subject",text:x.subject}) : null, el("span",{class:"muted small",text:fmtDate(x.updated_at)})]),
+            el("p",{text:x.comment}),
+            el("div",{class:"row",style:"gap:14px"},[
+              (own || isAdmin()) ? el("button",{class:"btn link small danger-link",text: own ? "Smazat moji recenzi" : "Smazat (správce)",onclick:function(){
+                sb.from("teacher_reviews").delete().eq("teacher_id", t.id).eq("user_id", x.user_id).then(function(r){
+                  if (r.error) return err("err", dbErrText(r.error));
+                  S.msg = {kind:"ok", text:"Recenze smazána."}; openTeacher(t.id);
+                });
+              }}) : null,
+              own ? null : genericReport(T, "review_teacher_id", t.id, "recenzi", {review_user_id:x.user_id})
+            ])
+          ])
+        ]);
+      })) : el("p",{class:"muted",text:"Zatím tu není žádná recenze. Napiš první."})
+    ])
+  ];
+}
+
+/* Formulář recenze: vybrat existujícího učitele, nebo přidat nového. */
+function openReviewForm(teacherId){
+  S.rev = {teacherId:teacherId || null, name:"", department:"", stars:0, subject:"", comment:"", existing:false, loading:!!teacherId};
+  if (!S.teachers) loadTeachers();
+  if (!teacherId) return;
+  Promise.all([
+    sb.from("teachers").select("id,name,department").eq("id", teacherId).maybeSingle(),
+    sb.from("teacher_reviews").select("stars,subject,comment").eq("teacher_id", teacherId).eq("user_id", S.me).maybeSingle()
+  ]).then(function(r){
+    var t = r[0].data, mine = r[1].data;
+    if (t){ S.rev.name = t.name; S.rev.department = t.department || ""; }
+    if (mine){ S.rev.stars = mine.stars; S.rev.subject = mine.subject || ""; S.rev.comment = mine.comment; S.rev.existing = true; }
+    S.rev.loading = false;
+    if (S.view === "revform") render();
+  });
+}
+
+function findTeacher(name){
+  var n = name.trim().toLowerCase();
+  return ((S.teachers && S.teachers.rows) || []).find(function(t){ return t.name.toLowerCase() === n; });
+}
+
+function reviewFormView(){
+  var R = S.rev || {};
+  if (R.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám…"})])];
+  var known = findTeacher(R.name);
+  var name = el("input",{type:"text",id:"rv-name",maxlength:"80",list:"rv-teachers",placeholder:"Např. Ing. Jan Novák, Ph.D.",disabled:!!R.teacherId,oninput:function(e){ R.name = e.target.value; render(); }});
+  name.value = R.name;
+  var list = el("datalist",{id:"rv-teachers"}, ((S.teachers && S.teachers.rows) || []).map(function(t){ return el("option",{value:t.name}, t.department ? [t.department] : []); }));
+  var dept = el("input",{type:"text",id:"rv-dept",maxlength:"80",placeholder:"Např. Katedra botaniky (nepovinné)",oninput:function(e){ R.department = e.target.value; }});
+  dept.value = R.department;
+  var subj = el("input",{type:"text",id:"rv-subject",maxlength:"60",placeholder:"Z jakého předmětu ho znáš (nepovinné)",oninput:function(e){ R.subject = e.target.value; }});
+  subj.value = R.subject;
+  var comment = el("textarea",{id:"rv-comment",maxlength:"1500",style:"min-height:140px",placeholder:"Jak vysvětluje, jaké jsou zkoušky a zápočty, co bys poradil ostatním…",oninput:function(e){ R.comment = e.target.value; }});
+  comment.value = R.comment;
+  var stars = [1,2,3,4,5].map(function(i){
+    return el("button",{type:"button",class:"starbtn"+(i <= R.stars ? " on" : ""),"aria-label":i+" "+plural(i,"hvězdička","hvězdičky","hvězdiček"),"aria-pressed":String(R.stars === i),text:i <= R.stars ? "★" : "☆",onclick:function(){ R.stars = i; render(); }});
+  });
+  var save = el("button",{class:"btn",type:"submit",text: R.existing ? "Uložit změny" : "Zveřejnit recenzi"});
+  var isNew = !R.teacherId && R.name.trim().length >= 3 && !known;
+  return [
+    el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Přidat"}), el("h1",{text: R.existing ? "Upravit recenzi" : "Recenze učitele"})]), el("a",{class:"plink",href: R.teacherId ? "#t/"+R.teacherId : "#ucitele",text:"Zpět bez uložení"})]),
+    el("form",{class:"panel",onsubmit:function(e){ e.preventDefault(); saveReview(save); }},[
+      el("div",{class:"field"},[el("label",{class:"label",for:"rv-name",text:"Učitel"}), name, list,
+        !R.teacherId ? el("p",{class:"muted small",text: known ? "Učitel už tu je, recenze se přidá k němu." : isNew ? "Tohohle učitele tu ještě nemáme, přidá se nový." : "Začni psát jméno a vyber ze seznamu, nebo napiš celé nové jméno s tituly."}) : null]),
+      isNew ? el("div",{class:"field"},[el("label",{class:"label",for:"rv-dept",text:"Katedra / fakulta"}), dept]) : null,
+      el("div",{class:"field"},[el("span",{class:"label",text:"Hodnocení"}), el("div",{class:"starrow",role:"group","aria-label":"Počet hvězdiček"}, stars)]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"rv-subject",text:"Předmět"}), subj]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"rv-comment",text:"Recenze"}), comment, el("p",{class:"muted small",text:"Aspoň 10 znaků. Piš věcně a bez urážek, recenze je pod tvojí přezdívkou."})]),
+      msgEl("rev"),
+      el("div",{class:"row"},[save])
+    ])
+  ];
+}
+
+function saveReview(btn){
+  var R = S.rev;
+  var name = R.name.trim().replace(/\s+/g, " ");
+  if (name.length < 3){ err("err","Napiš jméno učitele.","rev"); return focusLater("rv-name"); }
+  if (!R.stars) return err("err","Vyber počet hvězdiček.","rev");
+  if (R.comment.trim().length < 10){ err("err","Recenze musí mít aspoň 10 znaků.","rev"); return focusLater("rv-comment"); }
+  btn.disabled = true;
+  var known = R.teacherId ? {id:R.teacherId} : findTeacher(name);
+  var getId = known ? Promise.resolve(known.id)
+    : sb.from("teachers").insert({name:name, department:R.department.trim() || null}).select("id").single().then(function(r){
+        if (!r.error) return r.data.id;
+        if (/duplicate|unique/i.test(r.error.message || ""))
+          return sb.from("teachers").select("id").ilike("name", name.replace(/[\\%_]/g, "\\$&")).maybeSingle().then(function(x){ if (x.error || !x.data) throw r.error; return x.data.id; });
+        throw r.error;
+      });
+  var tid;
+  getId.then(function(id){
+    tid = id;
+    return sb.from("teacher_reviews").upsert({teacher_id:id, user_id:S.me, stars:R.stars, subject:R.subject.trim() || null, comment:R.comment.trim(), updated_at:new Date().toISOString()},{onConflict:"teacher_id,user_id"});
+  }).then(function(r){
+    if (r.error) throw r.error;
+    S.teachers = null;
+    S.msg = {kind:"ok", text:"Díky, recenze je zveřejněná."};
+    nav("#t/"+tid, true);
+  }).catch(function(e){ btn.disabled = false; err("err", dbErrText(e), "rev"); });
+}
+
+/* Menu Přidat v liště se zavře kliknutím mimo nebo klávesou Escape. */
+document.addEventListener("click", function(e){
+  var d = document.querySelector("details.addmenu[open]");
+  if (d && !d.contains(e.target)) d.removeAttribute("open");
+});
+document.addEventListener("keydown", function(e){
+  if (e.key !== "Escape") return;
+  var d = document.querySelector("details.addmenu[open]");
+  if (d){ d.removeAttribute("open"); var s = d.querySelector("summary"); if (s) s.focus(); }
+});
+
 /* ---------- start ---------- */
 function onSession(session){
   S.session = session;
   if (!session){
-    S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; S.owned = {}; S.following = {}; S.openReports = 0;
+    S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; S.owned = {}; S.ownedM = {}; S.following = {}; S.openReports = 0; S.materials = null; S.teachers = null;
     if (S.view !== "auth") go("auth", true);
     return;
   }
   if (S.me === session.user.id && S.view !== "loading" && S.view !== "auth") return;
   S.me = session.user.id;
-  Promise.all([refreshMe(), loadOwned(), loadFollowing()]).then(function(){
+  Promise.all([refreshMe(), loadOwned(), loadOwnedM(), loadFollowing()]).then(function(){
     if (!S.profile) S.profile = {nickname: (session.user.user_metadata && session.user.user_metadata.nickname) || "", credits:0, is_admin:false};
     S.msg = null; route();
   });

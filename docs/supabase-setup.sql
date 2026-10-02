@@ -474,10 +474,304 @@ end;
 $$;
 
 -- =========================================================
+-- Učitelé a jejich recenze
+-- =========================================================
+create table if not exists public.teachers (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(name) between 3 and 80),
+  department text check (department is null or char_length(department) <= 80),
+  created_by uuid default auth.uid() references public.profiles (id) on delete set null,
+  rating_avg numeric(3,2),
+  rating_count int not null default 0,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists teachers_name_lower_idx on public.teachers (lower(name));
+
+create table if not exists public.teacher_reviews (
+  teacher_id uuid not null references public.teachers (id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  stars int not null check (stars between 1 and 5),
+  subject text check (subject is null or char_length(subject) <= 60),
+  comment text not null check (char_length(comment) between 10 and 1500),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (teacher_id, user_id)
+);
+
+create or replace function public.refresh_teacher_rating()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_t uuid := coalesce(new.teacher_id, old.teacher_id);
+begin
+  update public.teachers t set
+    rating_avg = (select round(avg(stars)::numeric, 2) from public.teacher_reviews where teacher_id = v_t),
+    rating_count = (select count(*) from public.teacher_reviews where teacher_id = v_t)
+  where t.id = v_t;
+  return null;
+end;
+$$;
+drop trigger if exists teacher_reviews_refresh on public.teacher_reviews;
+create trigger teacher_reviews_refresh after insert or update or delete on public.teacher_reviews
+  for each row execute function public.refresh_teacher_rating();
+
+alter table public.teachers enable row level security;
+alter table public.teacher_reviews enable row level security;
+
+drop policy if exists "teachers: prihlaseni ctou" on public.teachers;
+create policy "teachers: prihlaseni ctou" on public.teachers for select to authenticated using (true);
+drop policy if exists "teachers: pridat" on public.teachers;
+create policy "teachers: pridat" on public.teachers for insert to authenticated with check (created_by = auth.uid());
+drop policy if exists "teachers: spravce meni" on public.teachers;
+create policy "teachers: spravce meni" on public.teachers for update to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "teachers: spravce maze" on public.teachers;
+create policy "teachers: spravce maze" on public.teachers for delete to authenticated using (public.is_admin());
+
+drop policy if exists "teacher_reviews: prihlaseni ctou" on public.teacher_reviews;
+create policy "teacher_reviews: prihlaseni ctou" on public.teacher_reviews for select to authenticated using (true);
+drop policy if exists "teacher_reviews: psat svoje" on public.teacher_reviews;
+create policy "teacher_reviews: psat svoje" on public.teacher_reviews for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "teacher_reviews: menit svoje" on public.teacher_reviews;
+create policy "teacher_reviews: menit svoje" on public.teacher_reviews for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "teacher_reviews: mazat svoje" on public.teacher_reviews;
+create policy "teacher_reviews: mazat svoje" on public.teacher_reviews for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- =========================================================
+-- Studijní materiály (soubor, odkaz nebo text), i placené
+-- =========================================================
+create table if not exists public.materials (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  title text not null check (char_length(title) between 1 and 100),
+  subject text check (subject is null or char_length(subject) between 1 and 40),
+  tags text[] not null default '{}' check (cardinality(tags) <= 5),
+  description text check (description is null or char_length(description) <= 2000),
+  kind text not null check (kind in ('file', 'link', 'text')),
+  file_name text check (file_name is null or char_length(file_name) <= 200),
+  file_size int check (file_size is null or file_size between 0 and 20971520),
+  price int not null default 0 check (price between 0 and 10000),
+  download_count int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists materials_updated_idx on public.materials (updated_at desc);
+create index if not exists materials_author_idx on public.materials (author_id);
+
+create table if not exists public.material_content (
+  material_id uuid primary key references public.materials (id) on delete cascade,
+  body text check (body is null or char_length(body) <= 50000),
+  url text check (url is null or (char_length(url) <= 500 and url ~* '^https?://')),
+  file_path text check (file_path is null or char_length(file_path) <= 400)
+);
+
+create table if not exists public.material_purchases (
+  buyer_id uuid not null references public.profiles (id) on delete cascade,
+  material_id uuid not null references public.materials (id) on delete cascade,
+  price int not null,
+  created_at timestamptz not null default now(),
+  primary key (buyer_id, material_id)
+);
+
+create or replace function public.can_open_material(p_material uuid)
+returns boolean
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select exists (
+    select 1 from public.materials m
+    where m.id = p_material
+      and (m.price = 0
+           or m.author_id = auth.uid()
+           or exists (select 1 from public.material_purchases p where p.material_id = m.id and p.buyer_id = auth.uid())
+           or public.is_admin())
+  );
+$$;
+
+-- Pro úložiště: cesta je <autor>/<id materiálu>/<soubor>.
+create or replace function public.can_open_material_path(p_name text)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+stable
+as $$
+declare
+  v_part text := split_part(p_name, '/', 2);
+begin
+  if v_part !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+  return public.can_open_material(v_part::uuid);
+end;
+$$;
+
+create or replace function public.owns_material_path(p_name text)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+stable
+as $$
+declare
+  v_part text := split_part(p_name, '/', 2);
+begin
+  if split_part(p_name, '/', 1) <> auth.uid()::text
+     or v_part !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+  return exists (select 1 from public.materials where id = v_part::uuid and author_id = auth.uid());
+end;
+$$;
+
+create or replace function public.buy_material(p_material uuid)
+returns int
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_price int;
+  v_author uuid;
+  v_title text;
+  v_balance int;
+  v_new int;
+begin
+  if auth.uid() is null then
+    raise exception 'Nejsi přihlášený.';
+  end if;
+  select price, author_id, title into v_price, v_author, v_title from public.materials where id = p_material;
+  if not found then
+    raise exception 'Materiál neexistuje.';
+  end if;
+  if v_author = auth.uid() then
+    raise exception 'Svůj vlastní materiál kupovat nemusíš.';
+  end if;
+
+  insert into public.material_purchases (buyer_id, material_id, price)
+    values (auth.uid(), p_material, v_price)
+    on conflict do nothing;
+  get diagnostics v_new = row_count;
+  if v_new = 0 or v_price = 0 then
+    select credits into v_balance from public.profiles where id = auth.uid();
+    return v_balance;
+  end if;
+
+  update public.profiles set credits = credits - v_price
+    where id = auth.uid() and credits >= v_price
+    returning credits into v_balance;
+  if not found then
+    raise exception 'NEDOSTATEK_KREDITU';
+  end if;
+  update public.profiles set credits = credits + v_price where id = v_author;
+  insert into public.credit_log (user_id, amount, reason, by_id) values
+    (auth.uid(), -v_price, 'Nákup materiálu: ' || v_title, auth.uid()),
+    (v_author, v_price, 'Prodej materiálu: ' || v_title, auth.uid());
+  return v_balance;
+end;
+$$;
+
+create or replace function public.count_material_open(p_material uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.materials set download_count = download_count + 1
+  where id = p_material and public.can_open_material(p_material) and author_id <> auth.uid();
+$$;
+
+alter table public.materials enable row level security;
+alter table public.material_content enable row level security;
+alter table public.material_purchases enable row level security;
+
+drop policy if exists "materials: prihlaseni ctou" on public.materials;
+create policy "materials: prihlaseni ctou" on public.materials for select to authenticated using (true);
+drop policy if exists "materials: vytvaret svoje" on public.materials;
+create policy "materials: vytvaret svoje" on public.materials for insert to authenticated with check (author_id = auth.uid());
+drop policy if exists "materials: menit svoje" on public.materials;
+create policy "materials: menit svoje" on public.materials for update to authenticated using (author_id = auth.uid()) with check (author_id = auth.uid());
+drop policy if exists "materials: mazat svoje" on public.materials;
+create policy "materials: mazat svoje" on public.materials for delete to authenticated using (author_id = auth.uid() or public.is_admin());
+
+drop policy if exists "material_content: cist s pristupem" on public.material_content;
+create policy "material_content: cist s pristupem" on public.material_content for select to authenticated using (public.can_open_material(material_id));
+drop policy if exists "material_content: vytvaret autor" on public.material_content;
+create policy "material_content: vytvaret autor" on public.material_content for insert to authenticated
+  with check (exists (select 1 from public.materials m where m.id = material_id and m.author_id = auth.uid()));
+drop policy if exists "material_content: menit autor" on public.material_content;
+create policy "material_content: menit autor" on public.material_content for update to authenticated
+  using (exists (select 1 from public.materials m where m.id = material_id and m.author_id = auth.uid()))
+  with check (exists (select 1 from public.materials m where m.id = material_id and m.author_id = auth.uid()));
+
+drop policy if exists "material_purchases: vlastni nebo spravce" on public.material_purchases;
+create policy "material_purchases: vlastni nebo spravce" on public.material_purchases
+  for select to authenticated using (buyer_id = auth.uid() or public.is_admin());
+
+-- Nahlášení: kvíz, materiál nebo recenze učitele.
+alter table public.reports alter column quiz_id drop not null;
+alter table public.reports add column if not exists material_id uuid references public.materials (id) on delete cascade;
+alter table public.reports add column if not exists review_teacher_id uuid;
+alter table public.reports add column if not exists review_user_id uuid;
+alter table public.reports drop constraint if exists reports_review_fk;
+alter table public.reports add constraint reports_review_fk foreign key (review_teacher_id, review_user_id)
+  references public.teacher_reviews (teacher_id, user_id) on delete cascade;
+alter table public.reports drop constraint if exists reports_one_target;
+alter table public.reports add constraint reports_one_target
+  check (num_nonnulls(quiz_id, material_id, review_teacher_id) = 1 and (review_teacher_id is null) = (review_user_id is null));
+create unique index if not exists reports_one_open_material_idx on public.reports (material_id, reporter_id) where status = 'open' and material_id is not null;
+create unique index if not exists reports_one_open_review_idx on public.reports (review_teacher_id, review_user_id, reporter_id) where status = 'open' and review_teacher_id is not null;
+
+-- Soubory materiálů: soukromé úložiště, stáhne jen ten, kdo má přístup.
+do $$
+begin
+  if exists (select 1 from information_schema.schemata where schema_name = 'storage') then
+    insert into storage.buckets (id, name, public, file_size_limit)
+      values ('materials', 'materials', false, 20971520)
+      on conflict (id) do update set public = false, file_size_limit = 20971520;
+
+    drop policy if exists "materials: stahnout s pristupem" on storage.objects;
+    create policy "materials: stahnout s pristupem" on storage.objects
+      for select to authenticated
+      using (bucket_id = 'materials' and public.can_open_material_path(name));
+    drop policy if exists "materials: nahrat autor" on storage.objects;
+    create policy "materials: nahrat autor" on storage.objects
+      for insert to authenticated
+      with check (bucket_id = 'materials' and public.owns_material_path(name));
+    drop policy if exists "materials: zmenit autor" on storage.objects;
+    create policy "materials: zmenit autor" on storage.objects
+      for update to authenticated
+      using (bucket_id = 'materials' and public.owns_material_path(name))
+      with check (bucket_id = 'materials' and public.owns_material_path(name));
+    drop policy if exists "materials: smazat autor" on storage.objects;
+    create policy "materials: smazat autor" on storage.objects
+      for delete to authenticated
+      using (bucket_id = 'materials' and (public.owns_material_path(name) or public.is_admin()));
+  end if;
+end;
+$$;
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
-  public.ratings, public.plays, public.follows, public.reports from anon, authenticated;
+  public.ratings, public.plays, public.follows, public.reports,
+  public.teachers, public.teacher_reviews, public.materials, public.material_content, public.material_purchases from anon, authenticated;
+grant select on public.teachers to authenticated;
+grant insert (name, department) on public.teachers to authenticated;
+grant update (name, department) on public.teachers to authenticated;
+grant delete on public.teachers to authenticated;
+grant select, insert, delete on public.teacher_reviews to authenticated;
+grant update (stars, subject, comment, updated_at) on public.teacher_reviews to authenticated;
+grant select, delete on public.materials to authenticated;
+grant insert (title, subject, tags, description, kind, file_name, file_size, price, updated_at) on public.materials to authenticated;
+grant update (title, subject, tags, description, kind, file_name, file_size, price, updated_at) on public.materials to authenticated;
+grant select, insert, update on public.material_content to authenticated;
+grant select on public.material_purchases to authenticated;
 grant select on public.profiles to authenticated;
 grant update (nickname, bio, avatar_v) on public.profiles to authenticated;
 -- Souhrny (hodnocení, počet hraní) může měnit jen databáze, ne autor.
@@ -490,7 +784,7 @@ grant select, insert, delete on public.ratings, public.follows to authenticated;
 grant update (stars, comment, updated_at) on public.ratings to authenticated;
 grant select, insert on public.plays to authenticated;
 grant select on public.reports to authenticated;
-grant insert (quiz_id, reason) on public.reports to authenticated;
+grant insert (quiz_id, material_id, review_teacher_id, review_user_id, reason) on public.reports to authenticated;
 grant update (status, resolved_by, resolved_at) on public.reports to authenticated;
 
 revoke all on function public.nickname_taken(text) from public;
@@ -505,3 +799,16 @@ grant execute on function public.buy_quiz(uuid) to authenticated;
 revoke all on function public.admin_add_credits(uuid, int, text) from public;
 revoke execute on function public.admin_add_credits(uuid, int, text) from anon;
 grant execute on function public.admin_add_credits(uuid, int, text) to authenticated;
+
+revoke all on function public.buy_material(uuid) from public;
+revoke execute on function public.buy_material(uuid) from anon;
+grant execute on function public.buy_material(uuid) to authenticated;
+revoke all on function public.count_material_open(uuid) from public;
+revoke execute on function public.count_material_open(uuid) from anon;
+grant execute on function public.count_material_open(uuid) to authenticated;
+revoke all on function public.can_open_material(uuid) from public;
+grant execute on function public.can_open_material(uuid) to authenticated;
+revoke all on function public.can_open_material_path(text) from public;
+grant execute on function public.can_open_material_path(text) to authenticated;
+revoke all on function public.owns_material_path(text) from public;
+grant execute on function public.owns_material_path(text) to authenticated;

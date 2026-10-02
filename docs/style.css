@@ -234,3 +234,38 @@ select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .themebtn{font:inherit;font-size:.85rem;font-weight:600;color:var(--bar-muted);background:none;border:1px solid var(--line);border-radius:6px;padding:4px 9px;cursor:pointer;margin-left:4px}
 .themebtn:hover{color:var(--bar-ink);border-color:var(--accent)}
 .themebtn:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+
+/* ---------- menu Přidat ---------- */
+.addmenu{position:relative}
+.addmenu summary{list-style:none;cursor:pointer}
+.addmenu summary::-webkit-details-marker{display:none}
+.btn.addbtn{padding:6px 14px;font-size:1rem}
+.addmenu[open] .addbtn{background:var(--accent-strong);border-color:var(--accent-strong)}
+.addmenu .menu{position:absolute;right:0;top:calc(100% + 8px);z-index:10;min-width:250px;background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--accent);border-radius:var(--radius);box-shadow:0 10px 30px rgba(29,38,24,.16);padding:6px;display:flex;flex-direction:column}
+.addmenu .menu a{display:flex;flex-direction:column;gap:1px;padding:10px 12px;border-radius:8px;text-decoration:none;color:var(--ink)}
+.addmenu .menu a strong{font-family:var(--display);font-size:1.08rem;color:var(--accent-strong)}
+.addmenu .menu a span{font-size:.85rem;color:var(--muted)}
+.addmenu .menu a:hover,.addmenu .menu a:focus-visible{background:var(--accent-soft);outline:none}
+@media (max-width:600px){.addmenu .menu{left:0;right:auto}}
+
+/* ---------- procházení ---------- */
+.tabs.browse{align-self:stretch;justify-content:flex-start;background:none;border:0;border-bottom:2px solid var(--line);border-radius:0;padding:0;gap:0}
+.tabs.browse .tab{border-radius:0;padding:8px 16px;margin-bottom:-2px;border-bottom:3px solid transparent;text-decoration:none;font-size:1.05rem;color:var(--muted)}
+.tabs.browse .tab:hover{color:var(--accent-strong)}
+.tabs.browse .tab[aria-current="page"]{background:none;color:var(--accent-strong);border-bottom-color:var(--accent)}
+.filters.four{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)}
+.filters.two{grid-template-columns:minmax(0,3fr) minmax(0,1fr)}
+@media (max-width:600px){.filters.four,.filters.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.pill.kind{background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+.card.teacher{justify-content:flex-start}
+.card.teacher .txt{flex:1}
+.desc{white-space:pre-wrap;overflow-wrap:anywhere;max-width:65ch}
+.mattext{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;max-width:70ch}
+
+/* ---------- učitel ---------- */
+.tsummary{display:flex;gap:28px;align-items:center;flex-wrap:wrap;background:var(--soft);border-radius:8px;padding:14px 18px}
+.tsummary .big{font-family:var(--display);font-weight:700;font-size:2.8rem;line-height:1;color:var(--accent-strong)}
+.dist{flex:1;min-width:180px;display:flex;flex-direction:column;gap:4px}
+.distrow{display:grid;grid-template-columns:2.2em 1fr 2em;gap:8px;align-items:center;font-size:.9rem}
+.distbar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
+.distbar i{display:block;height:100%;background:var(--warn)}
