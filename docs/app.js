@@ -136,9 +136,9 @@ function authView(){
   var btn = el("button",{class:"btn",type:"submit",text: reg ? "Zaregistrovat se" : "Přihlásit se",disabled:S.busy});
 
   var form = el("form",{class:"panel auth",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
-    el("div",{class:"authbrand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("strong",{text:"Kvízy"})]),
+    el("div",{class:"authbrand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"Č"}), el("strong",{text:"ČZU Hub"})]),
     el("h1",{text: reg ? "Vytvoř si účet" : "Přihlas se"}),
-    el("p",{class:"muted",text:"Po přihlášení uvidíš všechny kvízy, které lidi vytvořili, a můžeš dělat vlastní."}),
+    el("p",{class:"muted",text:"Kvízy, studijní materiály a recenze učitelů od studentů pro studenty."}),
     el("div",{class:"tabs",role:"group","aria-label":"Přihlášení nebo registrace"},[
       el("button",{type:"button",class:"tab","aria-pressed":String(!reg),text:"Přihlášení",onclick:function(){ S.authTab="login"; S.msg=null; render(); }}),
       el("button",{type:"button",class:"tab","aria-pressed":String(reg),text:"Registrace",onclick:function(){ S.authTab="register"; S.msg=null; render(); }})
@@ -147,7 +147,8 @@ function authView(){
     reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Tohle jméno uvidí ostatní u tvých kvízů."})]) : null,
     el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), pw, reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
     msgEl(),
-    el("div",{class:"row"},[btn])
+    el("div",{class:"row"},[btn]),
+    el("p",{class:"muted small",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."})
   ]);
   return [form];
 }
@@ -262,7 +263,7 @@ function renderBar(){
           : /^(edit|medit|revform)$/.test(S.view) ? "add" : "home";
   function link(href, text, key, extra){ return el("a",{href:href, class:"navlink", "aria-current": cur === key ? "page" : null},[text, extra || null]); }
   bar.replaceChildren(el("div",{class:"barin"},[
-    el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("span",{},[el("strong",{text:"Kvízy"}), el("small",{text:"studijní materiály"})])]),
+    el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"Č"}), el("span",{},[el("strong",{text:"ČZU Hub"}), el("small",{text:"studentský web"})])]),
     el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
       el("details",{class:"addmenu"},[
         el("summary",{class:"btn addbtn","aria-current": cur === "add" ? "page" : null,text:"+ Přidat"}),
