@@ -14,6 +14,8 @@ alter table public.profiles add column if not exists credits int not null defaul
 alter table public.profiles add column if not exists is_admin boolean not null default false;
 alter table public.profiles drop constraint if exists profiles_credits_check;
 alter table public.profiles add constraint profiles_credits_check check (credits >= 0);
+-- Přezdívka je unikátní bez ohledu na velká a malá písmena (Petra = petra).
+create unique index if not exists profiles_nickname_lower_idx on public.profiles (lower(nickname));
 
 alter table public.profiles enable row level security;
 
