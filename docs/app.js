@@ -52,7 +52,7 @@ function shuffle(a){ a=a.slice(); for (var i=a.length-1;i>0;i--){ var j=Math.flo
 function msgEl(){ return S.msg ? el("p",{class:"msg "+S.msg.kind, text:S.msg.text, role:"status"}) : null; }
 function render(){
   var a = document.activeElement, id = a && a.id && a.tagName === "INPUT" ? a.id : null, sel = id ? [a.selectionStart, a.selectionEnd] : null;
-  app.replaceChildren.apply(app, view());
+  app.replaceChildren.apply(app, view().filter(Boolean));
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
 }
 function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); window.scrollTo(0,0); }
