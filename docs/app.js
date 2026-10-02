@@ -468,7 +468,7 @@ function ratingSection(D, q, mine, open){
       e.preventDefault();
       if (!D.draft.stars) return err("err","Vyber počet hvězdiček.","rate");
       save.disabled = true;
-      sb.from("ratings").upsert({quiz_id:q.id, user_id:S.me, stars:D.draft.stars, comment:D.draft.comment.trim() || null, updated_at:new Date().toISOString()},{onConflict:"quiz_id,user_id"}).then(function(r){
+      saveOwnRow("ratings", {quiz_id:q.id, user_id:S.me}, {stars:D.draft.stars, comment:D.draft.comment.trim() || null, updated_at:new Date().toISOString()}).then(function(r){
         if (r.error){ save.disabled = false; return err("err", dbErrText(r.error), "rate"); }
         S.msg = {kind:"ok", text:"Díky za hodnocení!", where:"rate"};
         openDetail(q.id);
@@ -530,6 +530,17 @@ function reportSection(D, q){
     msgEl("report"),
     el("div",{class:"row"},[send, el("button",{class:"btn ghost",type:"button",text:"Zrušit",onclick:function(){ D.reporting = false; S.msg = null; render(); }})])
   ]);
+}
+
+/* Uloží vlastní hodnocení/recenzi: nejdřív zkusí vložit, a když už existuje, jen ji upraví.
+   (Upsert by měnil i klíčové sloupce, na které uživatel nemá právo.) */
+function saveOwnRow(table, key, fields){
+  return sb.from(table).insert(Object.assign({}, key, fields)).then(function(r){
+    if (!r.error || !(r.error.code === "23505" || /duplicate|unique/i.test(r.error.message || ""))) return r;
+    var q = sb.from(table).update(fields);
+    Object.keys(key).forEach(function(k){ q = q.eq(k, key[k]); });
+    return q;
+  });
 }
 
 /* ---------- nákup ---------- */
@@ -1860,7 +1871,7 @@ function saveReview(btn){
   var tid;
   getId.then(function(id){
     tid = id;
-    return sb.from("teacher_reviews").upsert({teacher_id:id, user_id:S.me, stars:R.stars, subject:R.subject.trim() || null, comment:R.comment.trim(), updated_at:new Date().toISOString()},{onConflict:"teacher_id,user_id"});
+    return saveOwnRow("teacher_reviews", {teacher_id:id, user_id:S.me}, {stars:R.stars, subject:R.subject.trim() || null, comment:R.comment.trim(), updated_at:new Date().toISOString()});
   }).then(function(r){
     if (r.error) throw r.error;
     S.teachers = null;
