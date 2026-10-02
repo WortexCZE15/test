@@ -49,7 +49,7 @@ function el(tag, attrs, kids){
   return n;
 }
 function shuffle(a){ a=a.slice(); for (var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
-function msgEl(){ return S.msg ? el("p",{class:"msg "+S.msg.kind, text:S.msg.text, role:"status"}) : null; }
+function msgEl(where){ return S.msg && (S.msg.where || null) === (where || null) ? el("p",{class:"msg "+S.msg.kind, text:S.msg.text, role:"status"}) : null; }
 function render(){
   var a = document.activeElement, id = a && a.id && a.tagName === "INPUT" ? a.id : null, sel = id ? [a.selectionStart, a.selectionEnd] : null;
   app.replaceChildren.apply(app, view().filter(Boolean));
@@ -58,7 +58,7 @@ function render(){
 function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); window.scrollTo(0,0); }
 function focusLater(id){ setTimeout(function(){ var x=document.getElementById(id); if (x) x.focus(); },0); }
 function plural(n, one, few, many){ return n===1 ? one : (n>=2 && n<=4) ? few : many; }
-function err(kind, text){ S.msg = {kind:kind, text:text}; render(); }
+function err(kind, text, where){ S.msg = {kind:kind, text:text, where:where || null}; render(); }
 function dbErrText(e){
   var m = (e && (e.message || e.error_description)) || "";
   if (/JWT|expired|not authenticated/i.test(m)) return "Přihlášení vypršelo. Odhlas se a přihlas znovu.";
@@ -288,17 +288,129 @@ function openEditor(q, questions, pw){
   go("edit");
 }
 
+/* Rozpozná otázky z textu. Umí dva tvary:
+   1) očíslované otázky s odpověďmi A) B) C), správná označená * / (správně) / ✓,
+      řádkem „Správně: B“ nebo klíčem na konci („Klíč: 1B 2A 3C“),
+   2) původní tvar: otázka, pod ní 3 odpovědi, správná s *, mezi otázkami prázdný řádek. */
+var MARK_RE = /\s*(\*|✓|✔|\((?:správně|spravne|správná|spravna)\))\s*$/i;
+function stripMark(t){ var m = MARK_RE.exec(t); return m ? {t:t.slice(0, m.index).trim(), ok:true} : {t:t.trim(), ok:false}; }
+function short(t){ return t.length > 40 ? t.slice(0, 40) + "…" : t; }
+
 function parseBulk(text){
+  var lines = text.replace(/\r/g,"").split("\n").map(function(s){ return s.replace(/\s+/g," ").trim(); });
+  var lettered = lines.filter(function(l){ return /^\*?\s*[A-Ca-c]\s*[\)\.:]\s+\S/.test(l); }).length >= 2;
+  return lettered ? parseLettered(lines) : parsePlain(text);
+}
+
+function parseLettered(lines){
+  var out = [], errs = [], cur = null, last = -1, title = "", keys = {};
+  var KEY_LINE = /^(?:spr[aá]vn[ěeáa]\s*(?:odpověď|odpoved)?|odpověď|odpoved|řešení|reseni)\s*[:\-–]\s*([A-Ca-c])(?![A-Za-zÀ-ž])/i;
+  var KEY_BLOCK = /^(?:klíč|klic|řešení|reseni|správné odpovědi|spravne odpovedi)(?=[\s:]|$)\s*:?\s*(.*)$/i;
+  var ANSWER = /^(\*)?\s*([A-Ca-c])\s*[\)\.:]\s*(.*)$/;
+  var NUMBERED = /^(?:otázka\s*)?(\d{1,3})\s*[\.\):]\s*(.*)$/i;
+  var inKey = false;
+
+  function start(q, num){ finish(); cur = {q:q, num:num, a:[null,null,null], correct:-1}; last = -1; }
+  function finish(){
+    if (!cur) return;
+    var n = cur.a.filter(function(x){ return x !== null; }).length;
+    if (n === 0){ if (!out.length && !title && cur.q) title = cur.q; }
+    else out.push(cur);
+    cur = null;
+  }
+  function readKeys(t){ var re = /(\d{1,3})\s*[\.\)\-:–]?\s*([A-Ca-c])(?![A-Za-zÀ-ž])/g, m; while ((m = re.exec(t))) keys[+m[1]] = m[2].toUpperCase().charCodeAt(0) - 65; }
+
+  lines.forEach(function(l){
+    if (!l) return;
+    var m;
+    if (!inKey && cur && (m = KEY_LINE.exec(l))){ cur.correct = m[1].toUpperCase().charCodeAt(0) - 65; return; }
+    if ((m = KEY_BLOCK.exec(l)) && !ANSWER.test(l)){ finish(); inKey = true; readKeys(m[1]); return; }
+    if (inKey){ readKeys(l); return; }
+    if ((m = ANSWER.exec(l)) && cur){
+      var idx = m[2].toUpperCase().charCodeAt(0) - 65, s = stripMark(m[3]);
+      cur.a[idx] = s.t; last = idx;
+      if (m[1] || s.ok) cur.correct = idx;
+      return;
+    }
+    if ((m = NUMBERED.exec(l)) && m[2]){ start(m[2], +m[1]); return; }
+    if (cur && last < 0){ cur.q += " " + l; return; }
+    if (cur && cur.a.some(function(x){ return x === null; })){ var w = stripMark(l); cur.a[last] += " " + w.t; if (w.ok) cur.correct = last; return; }
+    if (!cur && !out.length && !title){ title = l; return; }
+    start(l, null);
+  });
+  finish();
+
+  var qs = [];
+  out.forEach(function(c){
+    if (c.correct < 0 && c.num !== null && keys[c.num] !== undefined) c.correct = keys[c.num];
+    var n = c.a.filter(function(x){ return x !== null && x !== ""; }).length;
+    if (n !== 3){ errs.push("„"+short(c.q)+"“ má "+n+" "+plural(n,"odpověď","odpovědi","odpovědí")+" místo 3."); return; }
+    if (c.correct < 0){ errs.push("U „"+short(c.q)+"“ není označená správná odpověď."); return; }
+    qs.push({q:c.q, a:c.a, correct:c.correct});
+  });
+  return {qs:qs, errs:errs, title:title};
+}
+
+function parsePlain(text){
   var blocks = text.replace(/\r/g,"").split(/\n\s*\n/), out = [], errs = [];
   blocks.forEach(function(b, bi){
     var lines = b.split("\n").map(function(s){ return s.trim(); }).filter(Boolean);
     if (!lines.length) return;
     if (lines.length !== 4){ errs.push("Blok "+(bi+1)+" má "+(lines.length-1)+" odpovědí místo 3."); return; }
-    var correct = 0, a = lines.slice(1).map(function(s, i){ if (s[0] === "*"){ correct = i; return s.slice(1).trim(); } return s; });
-    out.push({q:lines[0], a:a, correct:correct});
+    var correct = 0, a = lines.slice(1).map(function(s, i){
+      if (s[0] === "*"){ correct = i; return s.slice(1).trim(); }
+      var x = stripMark(s); if (x.ok) correct = i; return x.t;
+    });
+    out.push({q:lines[0].replace(/^\d{1,3}\s*[\.\)]\s*/, ""), a:a, correct:correct});
   });
-  return {qs:out, errs:errs};
+  return {qs:out, errs:errs, title:""};
 }
+
+/* Text z PDF: pdf.js se načte až při prvním importu. */
+var pdfLib = null;
+function pdfToText(file){
+  var load = pdfLib ? Promise.resolve(pdfLib) : import("./vendor/pdfjs-6.3.289/pdf.min.mjs").then(function(lib){
+    lib.GlobalWorkerOptions.workerSrc = new URL("vendor/pdfjs-6.3.289/pdf.worker.min.mjs", document.baseURI).href;
+    return (pdfLib = lib);
+  });
+  return Promise.all([load, file.arrayBuffer()]).then(function(r){
+    return r[0].getDocument({data:new Uint8Array(r[1]), isEvalSupported:false}).promise;
+  }).then(function(doc){
+    var pages = [];
+    for (var i = 1; i <= doc.numPages; i++) pages.push(doc.getPage(i).then(function(p){ return p.getTextContent(); }));
+    return Promise.all(pages);
+  }).then(function(contents){
+    return contents.map(function(tc){
+      var out = "", lastY = null;
+      tc.items.forEach(function(it){
+        if (typeof it.str !== "string") return;
+        var y = it.transform ? it.transform[5] : null;
+        if (lastY !== null && y !== null && Math.abs(y - lastY) > 2 && !/\n$/.test(out)) out += "\n";
+        out += it.str;
+        if (it.hasEOL) out += "\n";
+        if (y !== null) lastY = y;
+      });
+      return out;
+    }).join("\n\n");
+  });
+}
+
+function importText(text, D, source){
+  var r = parseBulk(text);
+  if (!r.qs.length){
+    err("err", (source ? "V souboru „"+source+"“ jsem nenašel žádnou otázku. " : "Nenašel jsem žádnou otázku. ") + (r.errs.length ? r.errs.slice(0,3).join(" ") : "Zkontroluj, že má formát jako v ukázce."), "bulk");
+    return;
+  }
+  D.questions = D.questions.concat(r.qs);
+  if (!D.title.trim()) D.title = r.title || (source ? source.replace(/\.[^.]+$/, "") : "");
+  var msg = "Přidáno "+r.qs.length+" "+plural(r.qs.length,"otázka","otázky","otázek")+". Zkontroluj je v seznamu nahoře a ulož.";
+  if (r.errs.length) msg += " Přeskočeno "+r.errs.length+": "+r.errs.slice(0,3).join(" ")+(r.errs.length>3?" …":"");
+  err(r.errs.length ? "err" : "ok", msg, "bulk");
+}
+
+var CLAUDE_PROMPT = "Udělej mi test z tématu [TÉMA] jako PDF. Bude mít [POČET] otázek. "
+  + "Každou otázku očísluj (1., 2., …) a pod ni napiš přesně 3 odpovědi označené A), B), C), každou na vlastní řádek. "
+  + "Za správnou odpověď dej na konec řádku hvězdičku *. Nic jiného do testu nepiš.";
 
 function editView(){
   var D = S.edit;
@@ -320,27 +432,54 @@ function editView(){
   var addForm = el("form",{class:"panel",onsubmit:function(e){
     e.preventDefault();
     var a = na.map(function(x){ return x.value.trim(); });
-    if (!nq.value.trim() || a.some(function(x){ return !x; })) return err("err","Vyplň otázku a všechny 3 odpovědi.");
+    if (!nq.value.trim() || a.some(function(x){ return !x; })) return err("err","Vyplň otázku a všechny 3 odpovědi.", "add");
     var c = nr.findIndex(function(r){ return r.checked; });
     D.questions.push({q:nq.value.trim(), a:a, correct:c<0?0:c});
-    err("ok","Otázka přidaná. Nezapomeň uložit."); focusLater("new-q");
+    err("ok","Otázka přidaná. Nezapomeň uložit.", "add"); focusLater("new-q");
   }},[
     el("h2",{text:"Přidat otázku"}),
     el("div",{class:"field"},[el("label",{class:"label",for:"new-q",text:"Otázka"}), nq]),
     el("div",{class:"field"},[el("span",{class:"label",text:"Odpovědi (puntík = správná)"})].concat(na.map(function(inp,i){ return el("div",{class:"opt"},[nr[i], inp]); }))),
+    msgEl("add"),
     el("div",{class:"row"},[el("button",{class:"btn ghost",type:"submit",text:"Přidat do seznamu"})])
   ]);
 
-  var bulk = el("textarea",{id:"bulk",placeholder:"Hlavní město Francie?\n*Paříž\nLyon\nMarseille\n\nKolik je 7 × 8?\n54\n*56\n58"});
+  var bulk = el("textarea",{id:"bulk",placeholder:"1. Hlavní město Francie?\nA) Paříž *\nB) Lyon\nC) Marseille\n\n2. Kolik je 7 × 8?\nA) 54\nB) 56 *\nC) 58"});
+  var file = el("input",{type:"file",id:"bulk-file",accept:".pdf,.txt,application/pdf,text/plain",class:"small"});
+  var fileBtn = el("label",{class:"btn",for:"bulk-file",tabindex:"0",role:"button",text:"Nahrát PDF",onkeydown:function(e){ if (e.key==="Enter"||e.key===" "){ e.preventDefault(); file.click(); } }});
+  file.hidden = true;
+  file.addEventListener("change", function(){
+    var f = file.files && file.files[0]; if (!f) return;
+    file.value = "";
+    fileBtn.textContent = "Čtu soubor…";
+    var isPdf = /\.pdf$/i.test(f.name) || f.type === "application/pdf";
+    (isPdf ? pdfToText(f) : f.text()).then(function(t){ importText(t, D, f.name); },
+      function(){ err("err","Soubor „"+f.name+"“ se nepovedlo přečíst. Je to opravdu PDF s textem (ne naskenovaný obrázek)?", "bulk"); });
+  });
+  var copyBtn = el("button",{class:"btn ghost sm",type:"button",text:"Zkopírovat zadání pro Clauda",onclick:function(e){
+    var b = e.currentTarget;
+    var done = function(){ b.textContent = "Zkopírováno"; setTimeout(function(){ if (b.isConnected) b.textContent = "Zkopírovat zadání pro Clauda"; }, 2000); };
+    if (navigator.clipboard) navigator.clipboard.writeText(CLAUDE_PROMPT).then(done, function(){ promptBox.select(); });
+    else promptBox.select();
+  }});
+  var promptBox = el("textarea",{id:"claude-prompt",readonly:true,style:"min-height:96px","aria-label":"Zadání pro Clauda"});
+  promptBox.value = CLAUDE_PROMPT;
   var bulkPanel = el("div",{class:"panel"},[
-    el("h2",{text:"Nahrát víc otázek najednou"}),
-    el("p",{class:"muted small",text:"Na první řádek otázku, pod ni 3 odpovědi. Správnou označ hvězdičkou *. Mezi otázkami nech prázdný řádek."}),
+    el("h2",{text:"Nahrát test z PDF"}),
+    el("p",{class:"muted small",text:"Nahraj PDF s testem a otázky se doplní samy. Otázky očísluj, odpovědi označ A), B), C) a za správnou dej hvězdičku *. Funguje i řádek „Správně: B“ pod otázkou nebo klíč na konci, třeba „Klíč: 1A 2C 3B“."}),
+    el("div",{class:"row"},[fileBtn, file]),
+    el("details",{},[
+      el("summary",{class:"small",style:"cursor:pointer;font-weight:700",text:"Jak si nechat test udělat od Clauda"}),
+      el("div",{class:"field",style:"margin-top:10px"},[
+        el("p",{class:"muted small",text:"Zkopíruj tohle zadání do Clauda, doplň téma a počet otázek. PDF, které ti udělá, pak nahraj sem."}),
+        promptBox,
+        el("div",{class:"row"},[copyBtn])
+      ])
+    ]),
+    el("span",{class:"label",style:"margin-top:6px",text:"Nebo vlož text"}),
     bulk,
-    el("div",{class:"row"},[el("button",{class:"btn ghost",text:"Přidat z textu",onclick:function(){
-      var r = parseBulk(bulk.value);
-      D.questions = D.questions.concat(r.qs);
-      err(r.errs.length ? "err" : "ok", r.errs.length ? "Přidáno "+r.qs.length+". "+r.errs.join(" ") : "Přidáno "+r.qs.length+" "+plural(r.qs.length,"otázka","otázky","otázek")+". Nezapomeň uložit.");
-    }})])
+    el("div",{class:"row"},[el("button",{class:"btn ghost",text:"Přidat z textu",onclick:function(){ importText(bulk.value, D, null); }})]),
+    msgEl("bulk")
   ]);
 
   var saveBtn = el("button",{class:"btn",text:"Uložit kvíz",onclick:function(){ saveQuiz(saveBtn); }});
