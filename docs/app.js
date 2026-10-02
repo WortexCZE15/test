@@ -11,7 +11,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* view: loading | auth | home | lock | play | edit */
 var S = { view:"loading", authTab:"login", session:null, me:null, profile:null,
-          quizzes:[], listError:null, msg:null, play:null, edit:null, lockFor:null, filter:"", busy:false };
+          quizzes:[], listError:null, msg:null, people:null, peopleQ:"", prof:null, play:null, edit:null, lockFor:null, filter:"", busy:false };
 
 /* ---------- šifrování (heslo -> PBKDF2 -> AES-GCM) ---------- */
 var enc = new TextEncoder(), dec = new TextDecoder();
@@ -53,9 +53,21 @@ function msgEl(where){ return S.msg && (S.msg.where || null) === (where || null)
 function render(){
   var a = document.activeElement, id = a && a.id && a.tagName === "INPUT" ? a.id : null, sel = id ? [a.selectionStart, a.selectionEnd] : null;
   app.replaceChildren.apply(app, view().filter(Boolean));
+  renderBar();
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
 }
 function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); window.scrollTo(0,0); }
+/* Adresy: #kvizy (seznam), #lide (hledání lidí), #u/<id> (profil). */
+function nav(h, keepMsg){ S.keepMsg = !!keepMsg; if (location.hash === h) route(); else location.hash = h; }
+function route(){
+  if (!S.me) return;
+  var h = location.hash, keep = S.keepMsg; S.keepMsg = false;
+  var m = /^#u\/([0-9a-f-]{36})$/i.exec(h);
+  if (m){ openProfile(m[1]); go("profile", keep); return; }
+  if (h === "#lide"){ go("people", keep); loadPeople(); if (!S.quizzes.length) loadQuizzes(); return; }
+  go("home", keep); loadQuizzes();
+}
+window.addEventListener("hashchange", route);
 function focusLater(id){ setTimeout(function(){ var x=document.getElementById(id); if (x) x.focus(); },0); }
 function plural(n, one, few, many){ return n===1 ? one : (n>=2 && n<=4) ? few : many; }
 function err(kind, text, where){ S.msg = {kind:kind, text:text, where:where || null}; render(); }
@@ -83,6 +95,8 @@ function view(){
   switch (S.view){
     case "auth": return authView();
     case "home": return homeView();
+    case "people": return peopleView();
+    case "profile": return profileView();
     case "lock": return [lockView()];
     case "play": return playView();
     case "edit": return editView();
@@ -97,8 +111,8 @@ function authView(){
   var pw = el("input",{type:"password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true});
   var btn = el("button",{class:"btn",type:"submit",text: reg ? "Zaregistrovat se" : "Přihlásit se",disabled:S.busy});
 
-  var form = el("form",{class:"panel",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
-    el("span",{class:"brand",text:"Kvízy"}),
+  var form = el("form",{class:"panel auth",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
+    el("div",{class:"authbrand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("strong",{text:"Kvízy"})]),
     el("h1",{text: reg ? "Vytvoř si účet" : "Přihlas se"}),
     el("p",{class:"muted",text:"Po přihlášení uvidíš všechny kvízy, které lidi vytvořili, a můžeš dělat vlastní."}),
     el("div",{class:"tabs",role:"group","aria-label":"Přihlášení nebo registrace"},[
@@ -154,9 +168,33 @@ function loadQuizzes(){
     .then(function(r){
       if (r.error){ S.listError = dbErrText(r.error); S.quizzes = []; }
       else { S.listError = null; S.quizzes = r.data || []; }
-      if (S.view === "home") render();
+      if (S.view === "home" || S.view === "people") render();
     });
 }
+
+function profileLink(id, name, cls){
+  return el("a",{href:"#u/"+id, class:cls || "plink", text:name || "Neznámý"});
+}
+
+function quizCard(q, showAuthor){
+  var mine = q.author_id === S.me, n = q.question_count || 0, author = (q.profiles && q.profiles.nickname) || "Neznámý";
+  var card = el("button",{class:"card",onclick:function(){ openQuiz(q.id, "play"); }},[
+    el("span",{class:"txt"},[
+      el("strong",{text:q.title||"Bez názvu"}),
+      el("span",{class:"muted small",text:n+" "+plural(n,"otázka","otázky","otázek")+" · "+fmtDate(q.updated_at)}),
+      (mine || q.locked) ? el("span",{class:"row",style:"gap:6px"},[ mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null, q.locked ? el("span",{class:"pill",text:"Na heslo"}) : null ]) : null
+    ]),
+    el("span",{class:"go",text:"Hrát"})
+  ]);
+  var meta = el("div",{class:"cardmeta"},[
+    showAuthor ? el("span",{class:"small muted"},["Autor: ", profileLink(q.author_id, author)]) : null,
+    mine ? el("button",{class:"btn link small",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}) : null,
+    mine ? el("button",{class:"btn link small danger-link",text:"Smazat",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null
+  ]);
+  return el("div",{class:"cardwrap"},[card, (showAuthor || mine) ? meta : null]);
+}
+
+function fmtDate(d){ try { return new Date(d).toLocaleDateString("cs-CZ",{day:"numeric",month:"numeric",year:"numeric"}); } catch(e) { return ""; } }
 
 function homeView(){
   var list = S.quizzes, f = S.filter.trim().toLowerCase();
@@ -165,34 +203,121 @@ function homeView(){
   search.value = S.filter;
 
   var cards = S.listError ? el("p",{class:"msg err",text:S.listError}) :
-    shown.length ? el("div",{class:"cards"}, shown.map(function(q){
-      var mine = q.author_id === S.me, n = q.question_count || 0, author = (q.profiles && q.profiles.nickname) || "Neznámý";
-      var card = el("button",{class:"card",onclick:function(){ openQuiz(q.id, "play"); }},[
-        el("span",{class:"txt"},[
-          el("strong",{text:q.title||"Bez názvu"}),
-          el("span",{class:"muted small",text:author+" · "+n+" "+plural(n,"otázka","otázky","otázek")}),
-          (mine || q.locked) ? el("span",{class:"row",style:"gap:6px"},[ mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null, q.locked ? el("span",{class:"pill",text:"Na heslo"}) : null ]) : null
-        ]),
-        el("span",{class:"go",text:"Hrát"})
-      ]);
-      var actions = mine ? el("div",{class:"row",style:"gap:14px;padding-left:4px"},[
-        el("button",{class:"btn link small",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}),
-        el("button",{class:"btn link small",style:"color:var(--bad)",text:"Smazat",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }})
-      ]) : null;
-      return el("div",{class:"cardwrap"},[card, actions]);
-    })) : el("p",{class:"muted",text: list.length ? "Nic takového tu není." : "Zatím tu nikdo žádný kvíz nevytvořil. Buď první!"});
+    shown.length ? el("div",{class:"cards"}, shown.map(function(q){ return quizCard(q, true); }))
+    : el("p",{class:"muted",text: list.length ? "Nic takového tu není." : "Zatím tu nikdo žádný kvíz nevytvořil. Buď první!"});
 
   return [
     el("div",{class:"top"},[
       el("div",{},[el("span",{class:"label",text:"Ahoj, "+(S.profile ? S.profile.nickname : "")}), el("h1",{text:"Všechny kvízy"})]),
-      el("div",{class:"row"},[
-        el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }}),
-        el("button",{class:"btn ghost",text:"Odhlásit",onclick:logout})
-      ])
+      el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }})
     ]),
     msgEl(),
     list.length > 3 ? search : null,
     cards
+  ];
+}
+
+/* ---------- horní lišta ---------- */
+var bar = document.getElementById("bar");
+function renderBar(){
+  if (!bar) return;
+  if (!S.me || S.view === "auth" || S.view === "loading"){ bar.hidden = true; return; }
+  bar.hidden = false;
+  var cur = S.view === "people" ? "people" : (S.view === "profile" && S.prof && S.prof.id === S.me) ? "me" : (S.view === "profile" ? "people" : "home");
+  function link(href, text, key){ return el("a",{href:href, class:"navlink", "aria-current": cur === key ? "page" : null, text:text}); }
+  bar.replaceChildren(el("div",{class:"barin"},[
+    el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("span",{},[el("strong",{text:"Kvízy"}), el("small",{text:"studijní materiály"})])]),
+    el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
+      link("#kvizy","Kvízy","home"),
+      link("#lide","Lidé","people"),
+      link("#u/"+S.me,"Můj profil","me"),
+      el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout})
+    ])
+  ]));
+}
+
+/* ---------- lidé ---------- */
+var peopleTimer = null, peopleSeq = 0;
+function loadPeople(){
+  var q = S.peopleQ.trim(), seq = ++peopleSeq;
+  var req = sb.from("profiles").select("id,nickname,created_at").order("nickname").limit(50);
+  if (q) req = req.ilike("nickname", "%" + q.replace(/[\\%_]/g, "\\$&") + "%");
+  req.then(function(r){
+    if (seq !== peopleSeq) return;
+    S.people = r.error ? {error:dbErrText(r.error)} : {rows:r.data || []};
+    if (S.view === "people") render();
+  });
+}
+
+function peopleView(){
+  var search = el("input",{type:"search",id:"people-search",placeholder:"Napiš přezdívku","aria-label":"Hledat lidi podle přezdívky",oninput:function(e){
+    S.peopleQ = e.target.value; clearTimeout(peopleTimer); peopleTimer = setTimeout(loadPeople, 250);
+  }});
+  search.value = S.peopleQ;
+  if (!S.peopleQ) focusLater("people-search");
+  var counts = {};
+  S.quizzes.forEach(function(q){ counts[q.author_id] = (counts[q.author_id]||0) + 1; });
+  var body;
+  if (!S.people) body = el("p",{class:"muted",text:"Načítám…"});
+  else if (S.people.error) body = el("p",{class:"msg err",text:S.people.error});
+  else if (!S.people.rows.length) body = el("p",{class:"muted",text: S.peopleQ ? "Nikoho s přezdívkou „"+S.peopleQ.trim()+"“ jsem nenašel." : "Zatím tu nikdo není."});
+  else body = el("div",{class:"people"}, S.people.rows.map(function(p){
+    var n = counts[p.id] || 0;
+    return el("a",{href:"#u/"+p.id, class:"person"},[
+      el("span",{class:"avatar","aria-hidden":"true",text:(p.nickname||"?").charAt(0).toUpperCase()}),
+      el("span",{class:"txt"},[el("strong",{text:p.nickname + (p.id === S.me ? " (ty)" : "")}), el("span",{class:"muted small",text:n+" "+plural(n,"kvíz","kvízy","kvízů")+" · od "+fmtDate(p.created_at)})]),
+      el("span",{class:"go",text:"Profil"})
+    ]);
+  }));
+  return [
+    el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Lidé"}), el("h1",{text:"Najdi spolužáka"})])]),
+    search,
+    body
+  ];
+}
+
+/* ---------- profil ---------- */
+function openProfile(id){
+  var seq = ++peopleSeq;
+  S.prof = {id:id, loading:true};
+  Promise.all([
+    sb.from("profiles").select("id,nickname,created_at").eq("id", id).maybeSingle(),
+    sb.from("quizzes").select("id,title,question_count,locked,updated_at,author_id").eq("author_id", id).order("updated_at",{ascending:false})
+  ]).then(function(r){
+    if (seq !== peopleSeq) return;
+    var e = r[0].error || r[1].error;
+    S.prof = e ? {id:id, error:dbErrText(e)} : {id:id, p:r[0].data, quizzes:r[1].data || []};
+    if (S.view === "profile") render();
+  });
+}
+
+function profileView(){
+  var P = S.prof || {};
+  if (P.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám profil…"})])];
+  if (P.error) return [el("p",{class:"msg err",text:P.error})];
+  if (!P.p) return [el("div",{class:"panel"},[el("h2",{text:"Tenhle profil neexistuje"}), el("p",{},[el("a",{href:"#lide",class:"plink",text:"Zpět na lidi"})])])];
+  var me = P.id === S.me, qs = P.quizzes, total = qs.reduce(function(a,q){ return a + (q.question_count||0); }, 0);
+  var locked = qs.filter(function(q){ return q.locked; }).length;
+  return [
+    el("section",{class:"panel profile"},[
+      el("div",{class:"profhead"},[
+        el("span",{class:"avatar big","aria-hidden":"true",text:(P.p.nickname||"?").charAt(0).toUpperCase()}),
+        el("div",{class:"txt"},[
+          el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"}),
+          el("h1",{text:P.p.nickname}),
+          el("span",{class:"muted small",text:"Členem od "+fmtDate(P.p.created_at)})
+        ])
+      ]),
+      el("dl",{class:"stats"},[
+        el("div",{},[el("dt",{text:"Kvízy"}), el("dd",{text:String(qs.length)})]),
+        el("div",{},[el("dt",{text:"Otázky celkem"}), el("dd",{text:String(total)})]),
+        el("div",{},[el("dt",{text:"Na heslo"}), el("dd",{text:String(locked)})])
+      ])
+    ]),
+    msgEl(),
+    el("div",{class:"top"},[el("h2",{text: me ? "Moje materiály" : "Materiály"}), me ? el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }}) : null]),
+    qs.length ? el("div",{class:"cards"}, qs.map(function(q){ return quizCard(q, false); }))
+      : el("p",{class:"muted",text: me ? "Zatím jsi nic nevytvořil. Dej Nový kvíz." : P.p.nickname+" zatím nic nevytvořil."})
   ];
 }
 
@@ -202,6 +327,7 @@ function confirmDelete(btn, id){
     sb.from("quizzes").delete().eq("id", id).then(function(r){
       if (r.error) return err("err", dbErrText(r.error));
       S.quizzes = S.quizzes.filter(function(q){ return q.id !== id; });
+      if (S.prof && S.prof.quizzes) S.prof.quizzes = S.prof.quizzes.filter(function(q){ return q.id !== id; });
       err("ok","Kvíz smazán.");
     });
   } else {
@@ -237,7 +363,7 @@ function lockView(){
     el("p",{class:"muted small",text:"Tenhle kvíz je na heslo. Zeptej se autora."}),
     el("div",{class:"row",style:"flex-wrap:nowrap;width:100%"},[input, btn]),
     msgEl(),
-    el("div",{},[el("button",{class:"btn link",type:"button",text:"Zpět na seznam",onclick:function(){ go("home"); }})])
+    el("div",{},[el("button",{class:"btn link",type:"button",text:"Zpět na seznam",onclick:function(){ nav("#kvizy"); }})])
   ]);
 }
 
@@ -250,7 +376,7 @@ function prep(){ var P = S.play; P.opts = P.i < P.order.length ? shuffle([0,1,2]
 
 function playView(){
   var P = S.play;
-  var head = el("div",{class:"top"},[el("h1",{text:P.title||"Kvíz"}), el("button",{class:"btn link",text:"Zpět na seznam",onclick:function(){ go("home"); }})]);
+  var head = el("div",{class:"top"},[el("h1",{text:P.title||"Kvíz"}), el("button",{class:"btn link",text:"Zpět na seznam",onclick:function(){ nav("#kvizy"); }})]);
   if (!P.qs.length) return [head, el("div",{class:"panel"},[el("h2",{text:"Tenhle kvíz je zatím prázdný"})])];
   if (P.i >= P.order.length){
     var pct = Math.round(P.score / P.order.length * 100);
@@ -258,7 +384,7 @@ function playView(){
       el("span",{class:"label",text:"Hotovo"}),
       el("div",{class:"score",text:P.score+" / "+P.order.length}),
       el("p",{class:"muted",text: pct===100 ? "Všechno správně. Paráda!" : pct>=70 ? "Dobrý, "+pct+" % správně." : pct+" % správně. Zkus to ještě jednou."}),
-      el("div",{class:"row"},[el("button",{class:"btn",text:"Znovu od začátku",onclick:function(){ P.order=shuffle(P.order); P.i=0; P.score=0; prep(); render(); }}), el("button",{class:"btn ghost",text:"Vybrat jiný kvíz",onclick:function(){ go("home"); }})])
+      el("div",{class:"row"},[el("button",{class:"btn",text:"Znovu od začátku",onclick:function(){ P.order=shuffle(P.order); P.i=0; P.score=0; prep(); render(); }}), el("button",{class:"btn ghost",text:"Vybrat jiný kvíz",onclick:function(){ nav("#kvizy"); }})])
     ])];
   }
   var q = P.qs[P.order[P.i]], letters = ["A","B","C"];
@@ -484,7 +610,7 @@ function editView(){
 
   var saveBtn = el("button",{class:"btn",text:"Uložit kvíz",onclick:function(){ saveQuiz(saveBtn); }});
   return [
-    el("div",{class:"top"},[el("h1",{text: D.id ? "Upravit kvíz" : "Nový kvíz"}), el("button",{class:"btn link",text:"Zpět bez uložení",onclick:function(){ go("home"); }})]),
+    el("div",{class:"top"},[el("h1",{text: D.id ? "Upravit kvíz" : "Nový kvíz"}), el("button",{class:"btn link",text:"Zpět bez uložení",onclick:function(){ nav("#kvizy"); }})]),
     el("div",{class:"panel"},[
       el("div",{class:"field"},[el("label",{class:"label",for:"ed-title",text:"Název kvízu"}), title]),
       el("div",{class:"field"},[el("label",{class:"label",for:"ed-pw",text:"Heslo (nepovinné)"}), pw,
@@ -513,8 +639,7 @@ function saveQuiz(btn){
   }).then(function(res){
     if (res.error) throw res.error;
     S.msg = {kind:"ok", text:"Kvíz „"+D.title.trim()+"“ je uložený a ostatní ho uvidí v seznamu."};
-    go("home", true);
-    loadQuizzes();
+    nav("#kvizy", true);
   }).catch(function(e){
     btn.disabled = false; btn.textContent = "Uložit kvíz";
     err("err", dbErrText(e));
@@ -524,13 +649,12 @@ function saveQuiz(btn){
 /* ---------- start ---------- */
 function onSession(session){
   S.session = session;
-  if (!session){ S.me = null; S.profile = null; S.quizzes = []; if (S.view !== "auth") go("auth", true); return; }
+  if (!session){ S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; if (S.view !== "auth") go("auth", true); return; }
   if (S.me === session.user.id && S.view !== "loading" && S.view !== "auth") return;
   S.me = session.user.id;
   sb.from("profiles").select("nickname").eq("id", S.me).maybeSingle().then(function(r){
     S.profile = r.data || {nickname: (session.user.user_metadata && session.user.user_metadata.nickname) || ""};
-    S.msg = null; go("home");
-    loadQuizzes();
+    S.msg = null; route();
   });
 }
 
