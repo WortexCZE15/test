@@ -370,6 +370,34 @@ function adminBox(P){
   ]);
 }
 
+function renameForm(P){
+  var inp = el("input",{type:"text",id:"rename",maxlength:"30",autocomplete:"nickname","aria-label":"Nová přezdívka"});
+  inp.value = P.p.nickname;
+  var save = el("button",{class:"btn sm",type:"submit",text:"Uložit"});
+  return el("form",{class:"rename",onsubmit:function(e){
+    e.preventDefault();
+    var n = inp.value.trim();
+    if (n === P.p.nickname){ P.renaming = false; return render(); }
+    if (n.length < 2 || n.length > 30){ err("err","Přezdívka musí mít 2 až 30 znaků."); return focusLater("rename"); }
+    save.disabled = true;
+    sb.from("profiles").update({nickname:n}).eq("id", S.me).then(function(r){
+      if (r.error){
+        save.disabled = false;
+        err("err", /duplicate|unique/i.test(r.error.message||"") ? "Tuhle přezdívku už někdo má. Vyber si jinou." : dbErrText(r.error));
+        return focusLater("rename");
+      }
+      P.p.nickname = n; S.profile.nickname = n; P.renaming = false;
+      S.quizzes.forEach(function(q){ if (q.author_id === S.me && q.profiles) q.profiles = {nickname:n}; });
+      P.quizzes.forEach(function(q){ if (q.profiles) q.profiles = {nickname:n}; });
+      S.people = null;
+      err("ok","Přezdívka změněná na „"+n+"“.");
+    });
+  }},[
+    inp,
+    el("div",{class:"row"},[save, el("button",{class:"btn ghost sm",type:"button",text:"Zrušit",onclick:function(){ P.renaming = false; S.msg = null; render(); }})])
+  ]);
+}
+
 function profileView(){
   var P = S.prof || {};
   if (P.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám profil…"})])];
@@ -388,8 +416,9 @@ function profileView(){
         el("span",{class:"avatar big","aria-hidden":"true",text:(P.p.nickname||"?").charAt(0).toUpperCase()}),
         el("div",{class:"txt"},[
           el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"}), P.p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null]),
-          el("h1",{text:P.p.nickname}),
-          el("span",{class:"muted small",text:"Členem od "+fmtDate(P.p.created_at)})
+          P.renaming ? renameForm(P) : el("h1",{text:P.p.nickname}),
+          el("span",{class:"muted small"},["Členem od "+fmtDate(P.p.created_at),
+            me && !P.renaming ? el("button",{class:"btn link small",style:"margin-left:12px",text:"Změnit přezdívku",onclick:function(){ P.renaming = true; S.msg = null; render(); focusLater("rename"); }}) : null])
         ])
       ]),
       el("dl",{class:"stats"}, stats)
