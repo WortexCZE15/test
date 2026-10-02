@@ -227,6 +227,15 @@ function loadFollowing(){
   });
 }
 
+/* ---------- vzhled (světlý je výchozí) ---------- */
+function isDark(){ return document.documentElement.getAttribute("data-theme") === "dark"; }
+function toggleTheme(){
+  var dark = !isDark();
+  if (dark) document.documentElement.setAttribute("data-theme","dark"); else document.documentElement.removeAttribute("data-theme");
+  try { localStorage.setItem("kvizy-theme", dark ? "dark" : "light"); } catch(e) {}
+  renderBar();
+}
+
 /* ---------- horní lišta ---------- */
 var bar = document.getElementById("bar");
 function renderBar(){
@@ -244,7 +253,8 @@ function renderBar(){
       isAdmin() ? link("#admin","Správa","admin", S.openReports ? el("span",{class:"badge","aria-label":S.openReports+" nevyřešených nahlášení",text:String(S.openReports)}) : null) : null,
       link("#u/"+S.me,"Můj profil","me"),
       el("a",{href:"#u/"+S.me, class:"credits", title:"Tvoje kredity", text:kr((S.profile && S.profile.credits) || 0)}),
-      el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout})
+      el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout}),
+      el("button",{class:"themebtn",type:"button","aria-label":"Přepnout světlý a tmavý vzhled",text: isDark() ? "Světlý" : "Tmavý",onclick:toggleTheme})
     ])
   ]));
 }
