@@ -88,7 +88,7 @@ function err(kind, text, where){ S.msg = {kind:kind, text:text, where:where || n
 function dbErrText(e){
   var m = (e && (e.message || e.error_description)) || "";
   if (/JWT|expired|not authenticated/i.test(m)) return "Přihlášení vypršelo. Odhlas se a přihlas znovu.";
-  if (/row-level security|permission denied/i.test(m)) return "Na tohle nemáš oprávnění.";
+  if (/row-level security|permission denied/i.test(m)) return "Na tohle nemáš oprávnění. (Detail pro správce: " + m + ")";
   if (/Failed to fetch|NetworkError/i.test(m)) return "Nepovedlo se spojit s databází. Zkontroluj internet a zkus to znovu.";
   if (/NEDOSTATEK_KREDITU/.test(m)) return "Nemáš dost kreditů. Kredity ti přidá správce.";
   if (/column .* does not exist|Could not find the .* (column|table|function)|relation .* does not exist/i.test(m)) return "Databáze ještě nemá nejnovější nastavení. Správce musí znovu spustit supabase-setup.sql.";
@@ -637,7 +637,11 @@ function openProfile(id){
     priv ? sb.from("material_purchases").select("created_at,materials("+MAT_COLS+")").eq("buyer_id", id).order("created_at",{ascending:false}) : none
   ]).then(function(r){
     if (seq !== peopleSeq) return;
-    var e = r.map(function(x){ return x.error; }).filter(Boolean)[0];
+    /* Profil a kvízy jsou nutné; ostatní části se při chybě jen vynechají. */
+    var e = r[0].error || r[1].error;
+    var partErr = r.slice(2).map(function(x){ return x.error; }).filter(Boolean);
+    if (partErr.length && window.console) console.warn("Profil: část se nenačetla", partErr);
+    r = r.map(function(x, i){ return i > 1 && x.error ? {data:[], count:0} : x; });
     if (e){ S.prof = {id:id, error:dbErrText(e)}; }
     else {
       var plays = r[6].data || [];
@@ -645,6 +649,7 @@ function openProfile(id){
         bought:(r[2].data || []).map(function(x){ return x.quizzes; }).filter(Boolean), log:r[3].data || [],
         followers:r[4].count || 0, followingN:r[5].count || 0, priv:priv,
         mats:r[7].data || [], reviews:r[8].data || [], boughtM:(r[9].data || []).map(function(x){ return x.materials; }).filter(Boolean),
+        partErr: partErr.length ? dbErrText(partErr[0]) : null,
         played:plays.length, score:plays.reduce(function(a,p){ return a + p.score; }, 0), total:plays.reduce(function(a,p){ return a + p.total; }, 0)};
       if (id === S.me && r[0].data){ S.profile = Object.assign({}, S.profile, r[0].data); renderBar(); }
     }
@@ -820,7 +825,8 @@ function profileView(){
         followBtn ? el("div",{class:"followwrap"},[followBtn]) : null
       ]),
       bioBlock(P, me),
-      el("dl",{class:"stats"}, stats)
+      el("dl",{class:"stats"}, stats),
+      P.partErr ? el("p",{class:"msg err small",text:"Část profilu se nenačetla. "+P.partErr}) : null
     ]),
     isAdmin() ? adminBox(P) : null,
     msgEl(),
