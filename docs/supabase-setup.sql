@@ -925,6 +925,82 @@ create trigger material_content_reset_verified after insert or update on public.
   for each row execute function public.reset_material_verification();
 
 -- =========================================================
+-- Ověřené kvízy a učitelé (stejně jako materiály)
+-- =========================================================
+alter table public.quizzes add column if not exists verified_by uuid references public.profiles (id) on delete set null;
+alter table public.quizzes add column if not exists verified_at timestamptz;
+alter table public.teachers add column if not exists verified_by uuid references public.profiles (id) on delete set null;
+alter table public.teachers add column if not exists verified_at timestamptz;
+
+create or replace function public.set_quiz_verified(p_quiz uuid, p_verified boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Ověřovat kvízy může jen moderátor.';
+  end if;
+  update public.quizzes set
+    verified_by = case when p_verified then auth.uid() end,
+    verified_at = case when p_verified then now() end
+  where id = p_quiz;
+  if not found then
+    raise exception 'Kvíz neexistuje.';
+  end if;
+end;
+$$;
+
+create or replace function public.set_teacher_verified(p_teacher uuid, p_verified boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Ověřovat učitele může jen moderátor.';
+  end if;
+  update public.teachers set
+    verified_by = case when p_verified then auth.uid() end,
+    verified_at = case when p_verified then now() end
+  where id = p_teacher;
+  if not found then
+    raise exception 'Učitel neexistuje.';
+  end if;
+end;
+$$;
+
+-- Když autor změní ověřený kvíz (název, otázky, heslo), ověření se zruší.
+-- Počty hraní a hodnocení se mění bez vlivu na ověření.
+create or replace function public.reset_quiz_verification()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_table_name = 'quiz_content' then
+    update public.quizzes set verified_by = null, verified_at = null
+      where id = new.quiz_id and verified_at is not null;
+    return null;
+  end if;
+  if (new.title, new.question_count, new.locked) is distinct from (old.title, old.question_count, old.locked) then
+    new.verified_by := null;
+    new.verified_at := null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists quizzes_reset_verified on public.quizzes;
+create trigger quizzes_reset_verified before update on public.quizzes
+  for each row execute function public.reset_quiz_verification();
+drop trigger if exists quiz_content_reset_verified on public.quiz_content;
+create trigger quiz_content_reset_verified after insert or update on public.quiz_content
+  for each row execute function public.reset_quiz_verification();
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
@@ -999,3 +1075,9 @@ grant execute on function public.set_material_verified(uuid, boolean) to authent
 revoke all on function public.admin_set_moderator(uuid, boolean) from public;
 revoke execute on function public.admin_set_moderator(uuid, boolean) from anon;
 grant execute on function public.admin_set_moderator(uuid, boolean) to authenticated;
+revoke all on function public.set_quiz_verified(uuid, boolean) from public;
+revoke execute on function public.set_quiz_verified(uuid, boolean) from anon;
+grant execute on function public.set_quiz_verified(uuid, boolean) to authenticated;
+revoke all on function public.set_teacher_verified(uuid, boolean) from public;
+revoke execute on function public.set_teacher_verified(uuid, boolean) from anon;
+grant execute on function public.set_teacher_verified(uuid, boolean) to authenticated;

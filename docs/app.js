@@ -230,7 +230,7 @@ function logout(){ sb.auth.signOut(); }
 
 
 /* ---------- společné ---------- */
-var QUIZ_COLS = "id,title,question_count,locked,price,subject,tags,rating_avg,rating_count,play_count,score_sum,total_sum,updated_at,author_id,profiles!quizzes_author_id_fkey(nickname,avatar_v)";
+var QUIZ_COLS = "id,title,question_count,locked,price,subject,tags,rating_avg,rating_count,play_count,score_sum,total_sum,updated_at,verified_at,verified_by,author_id,profiles!quizzes_author_id_fkey(nickname,avatar_v)";
 var SUBJECTS = ["Angličtina","Biologie","Botanika","Chemie","Ekonomie","Fyzika","Informatika","Matematika","Statistika","Zoologie"];
 var LETTERS = "ABCDEF";
 var MIN_A = 2, MAX_A = 6;
@@ -239,6 +239,39 @@ function isAdmin(){ return !!(S.profile && S.profile.is_admin); }
 function isMod(){ return !!(S.profile && (S.profile.is_moderator || S.profile.is_admin)); }
 function roleBadges(p){ return [p && p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null, p && p.is_moderator ? el("span",{class:"pill mod",text:"Moderátor"}) : null]; }
 function verifiedPill(){ return el("span",{class:"pill verified",text:"✓ Ověřeno moderátorem"}); }
+/* Ověření moderátorem: společné pro kvízy, materiály a učitele. */
+var VERIFY = {
+  quiz:     {rpc:"set_quiz_verified",     arg:"p_quiz",     what:"Kvíz",     ok:"Kvíz je označený jako ověřený."},
+  material: {rpc:"set_material_verified", arg:"p_material", what:"Materiál", ok:"Materiál je označený jako ověřený."},
+  teacher:  {rpc:"set_teacher_verified",  arg:"p_teacher",  what:"Učitele",  ok:"Učitel je označený jako ověřený."}
+};
+function loadVerifier(holder, uid, stillCurrent, rerender){
+  if (!uid) return;
+  sb.from("profiles").select("id,nickname").eq("id", uid).maybeSingle().then(function(x){
+    if (stillCurrent()){ holder.verifier = x.data; rerender(); }
+  });
+}
+function verifiedBox(holder, item, kind){
+  if (!item.verified_at) return null;
+  var v = holder.verifier, verb = kind === "teacher" ? "Údaje o učiteli zkontroloval(a) " : VERIFY[kind].what+" zkontroloval(a) ";
+  return el("div",{class:"verifiedbox"},[
+    el("span",{class:"pill mod",text:"Moderátor"}),
+    el("span",{},[ v ? verb : verb.replace(/\(a\) $/, " moderátor"), v ? profileLink(v.id, v.nickname) : null, " · "+fmtDate(item.verified_at) ])
+  ]);
+}
+function verifyButton(kind, item, after){
+  if (!isMod()) return null;
+  var on = !!item.verified_at, cfg = VERIFY[kind];
+  return el("button",{class:"btn "+(on ? "ghost" : "info"),text: on ? "Zrušit ověření" : "✓ Ověřit",onclick:function(e){
+    var b = e.currentTarget; b.disabled = true;
+    var args = {p_verified:!on}; args[cfg.arg] = item.id;
+    sb.rpc(cfg.rpc, args).then(function(r){
+      if (r.error){ b.disabled = false; return err("err", dbErrText(r.error)); }
+      S.msg = {kind:"ok", text: !on ? cfg.ok : "Ověření zrušeno."};
+      after();
+    });
+  }});
+}
 function canOpen(q){ return !q.price || q.author_id === S.me || !!S.owned[q.id] || isAdmin(); }
 function kr(n){ return n+" "+plural(n,"kredit","kredity","kreditů"); }
 function fmtDate(d){ try { return new Date(d).toLocaleDateString("cs-CZ",{day:"numeric",month:"numeric",year:"numeric"}); } catch(e) { return ""; } }
@@ -335,6 +368,7 @@ function renderBar(){
 function quizCard(q, showAuthor){
   var mine = q.author_id === S.me, n = q.question_count || 0, owned = !!S.owned[q.id];
   var pills = [
+    q.verified_at ? verifiedPill() : null,
     q.subject ? el("span",{class:"pill subject",text:q.subject}) : null,
     q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
     mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null,
@@ -370,6 +404,7 @@ function homeView(){
   var shown = list.filter(function(q){
     if (S.homeTab === "following" && !S.following[q.author_id]) return false;
     if (S.subject && q.subject !== S.subject) return false;
+    if (S.qVerified && !q.verified_at) return false;
     if (!f) return true;
     return (q.title||"").toLowerCase().indexOf(f) >= 0 || authorOf(q).toLowerCase().indexOf(f) >= 0
       || (q.subject||"").toLowerCase().indexOf(f) >= 0 || (q.tags||[]).some(function(t){ return t.indexOf(f) >= 0; });
@@ -413,6 +448,7 @@ function homeView(){
     msgEl(),
     tabs,
     el("div",{class:"filters"},[search, subjSel, sortSel]),
+    el("label",{class:"check"},[(function(){ var c = el("input",{type:"checkbox",id:"q-verified",onchange:function(e){ S.qVerified = e.target.checked; render(); }}); c.checked = !!S.qVerified; return c; })(), " Jen ověřené moderátorem"]),
     cards
   ];
 }
@@ -451,7 +487,9 @@ function openDetail(id){
     else {
       var ratings = r[1].data || [], mine = ratings.find(function(x){ return x.user_id === S.me; });
       S.det = {id:id, q:r[0].data, ratings:ratings, plays:r[2].data || [],
-               draft:{stars: mine ? mine.stars : 0, comment: mine ? (mine.comment || "") : ""}, hasMine:!!mine, reporting:false};
+               draft:{stars: mine ? mine.stars : 0, comment: mine ? (mine.comment || "") : ""}, hasMine:!!mine, reporting:false, verifier:null};
+      var D = S.det;
+      if (D.q) loadVerifier(D, D.q.verified_by, function(){ return seq === detailSeq; }, function(){ if (S.view === "detail") render(); });
     }
     if (S.view === "detail") render();
   });
@@ -469,11 +507,13 @@ function detailView(){
     open ? el("button",{class:"btn",text:"Hrát",onclick:function(){ openQuiz(q.id, "play"); }})
          : el("button",{class:"btn",text:"Koupit za "+kr(q.price),onclick:function(){ S.buyFor = {type:"quiz", item:q}; go("buy"); }}),
     mine ? el("button",{class:"btn ghost",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}) : null,
-    (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null
+    (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null,
+    verifyButton("quiz", q, function(){ S.quizzes.forEach(function(x){ if (x.id === q.id) x.verified_at = q.verified_at ? null : new Date().toISOString(); }); openDetail(q.id); render(); })
   ]);
 
   var head = el("section",{class:"panel detail"},[
     el("span",{class:"row",style:"gap:6px"},[
+      q.verified_at ? verifiedPill() : null,
       q.subject ? el("span",{class:"pill subject",text:q.subject}) : null,
       q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
       S.owned[q.id] && !mine ? el("span",{class:"pill mine",text:"Koupeno"}) : null,
@@ -490,6 +530,8 @@ function detailView(){
       el("div",{},[el("dt",{text:"Hráno"}), el("dd",{text:(q.play_count||0)+"×"})]),
       el("div",{},[el("dt",{text:"Úspěšnost"}), el("dd",{text: q.total_sum ? pct(q.score_sum, q.total_sum)+" %" : "–"}), el("span",{class:"muted small",text:"průměr všech"})])
     ]),
+    verifiedBox(D, q, "quiz"),
+    mine && q.verified_at ? el("p",{class:"muted small",text:"Když kvíz upravíš, ověření se zruší a moderátor ho bude muset zkontrolovat znovu."}) : null,
     best ? el("p",{class:"yourbest"},["Tvoje nejlepší skóre: ", el("strong",{text:best.score+" / "+best.total+" ("+pct(best.score,best.total)+" %)"}), " · hráls "+D.plays.length+"×"]) : null,
     msgEl(),
     actions
@@ -1435,7 +1477,7 @@ function loadMaterials(){
   });
 }
 function loadTeachers(){
-  return sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at").order("name").limit(1000).then(function(r){
+  return sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at,verified_at,verified_by").order("name").limit(1000).then(function(r){
     S.teachers = r.error ? {error:dbErrText(r.error)} : {rows:r.data || []};
     if (S.view === "home" || S.view === "revform") render();
   });
@@ -1519,7 +1561,7 @@ function teacherCard(t){
   return el("a",{class:"card teacher",href:"#t/"+t.id},[
     el("span",{class:"avatar","aria-hidden":"true",text:t.name.replace(/^(?:(?:doc|prof|ing|mgr|bc|rndr|phdr|judr|mudr|ph\.d|csc|drsc|dr)\.?\s+)+/i, "").charAt(0).toUpperCase()}),
     el("span",{class:"txt"},[
-      el("strong",{text:t.name}),
+      el("span",{class:"row",style:"gap:8px"},[el("strong",{text:t.name}), t.verified_at ? verifiedPill() : null]),
       t.department ? el("span",{class:"muted small",text:t.department}) : null,
       el("span",{class:"small"},[el("span",{class: t.rating_count ? "stars" : "muted",text: t.rating_count ? starsText(t.rating_avg)+" "+Number(t.rating_avg).toFixed(1).replace(".", ",") : "Bez recenzí"}),
         t.rating_count ? el("span",{class:"muted",text:" · "+t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")}) : null])
@@ -1531,6 +1573,7 @@ function teacherCard(t){
 function teachersBrowse(){
   var T = S.teachers, rows = (T && T.rows) || [], f = S.tFilter.trim().toLowerCase();
   var shown = f ? rows.filter(function(t){ return t.name.toLowerCase().indexOf(f) >= 0 || (t.department||"").toLowerCase().indexOf(f) >= 0; }) : rows.slice();
+  if (S.tVerified) shown = shown.filter(function(t){ return !!t.verified_at; });
   if (S.tSort === "best") shown.sort(function(a,b){ return (Number(b.rating_avg)||0) - (Number(a.rating_avg)||0) || b.rating_count - a.rating_count; });
   if (S.tSort === "most") shown.sort(function(a,b){ return b.rating_count - a.rating_count; });
   var search = el("input",{type:"search",id:"t-search",placeholder:"Hledat učitele nebo katedru","aria-label":"Hledat učitele",oninput:function(e){ S.tFilter = e.target.value; render(); }});
@@ -1550,6 +1593,7 @@ function teachersBrowse(){
     browseTabs(),
     msgEl(),
     el("div",{class:"filters two"},[search, sort]),
+    el("label",{class:"check"},[(function(){ var c = el("input",{type:"checkbox",id:"t-verified",onchange:function(e){ S.tVerified = e.target.checked; render(); }}); c.checked = !!S.tVerified; return c; })(), " Jen ověření moderátorem"]),
     body,
     el("p",{class:"muted small",text:"Piš věcně a slušně: jak vysvětluje, jaké jsou zkoušky, co bys poradil spolužákům. Urážky správce smaže."})
   ];
@@ -1821,13 +1865,14 @@ function openTeacher(id){
   var seq = ++tchSeq;
   S.tch = {id:id, loading:true};
   Promise.all([
-    sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at").eq("id", id).maybeSingle(),
+    sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at,verified_at,verified_by").eq("id", id).maybeSingle(),
     sb.rpc("get_teacher_reviews",{p_teacher:id})
   ]).then(function(r){
     if (seq !== tchSeq) return;
     var e = r[0].error || r[1].error;
     var reviews = (r[1].data || []).map(function(x){ x.profiles = {nickname:x.nickname, avatar_v:x.avatar_v}; return x; });
-    S.tch = e ? {id:id, error:dbErrText(e)} : {id:id, t:r[0].data, reviews:reviews, reporting:false};
+    S.tch = e ? {id:id, error:dbErrText(e)} : {id:id, t:r[0].data, reviews:reviews, reporting:false, verifier:null};
+    if (!e && r[0].data) loadVerifier(S.tch, r[0].data.verified_by, function(){ return seq === tchSeq; }, function(){ if (S.view === "tdetail") render(); });
     if (S.view === "tdetail") render();
   });
 }
@@ -1843,9 +1888,10 @@ function teacherDetailView(){
   return [
     el("div",{},[el("a",{href:"#ucitele",class:"plink small",text:"← Všichni učitelé"})]),
     el("section",{class:"panel detail"},[
-      el("span",{class:"label",text:"Učitel"}),
+      el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text:"Učitel"}), t.verified_at ? verifiedPill() : null]),
       el("h1",{text:t.name}),
       t.department ? el("p",{class:"muted",text:t.department}) : null,
+      verifiedBox(T, t, "teacher"),
       el("div",{class:"tsummary"},[
         el("div",{},[el("div",{class:"big",text: t.rating_count ? Number(t.rating_avg).toFixed(1).replace(".", ",") : "–"}), el("div",{class:"stars",text:starsText(t.rating_avg)}),
           el("div",{class:"muted small",text:t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")})]),
@@ -1854,6 +1900,7 @@ function teacherDetailView(){
       msgEl(),
       el("div",{class:"row"},[
         el("a",{class:"btn",href:"#pridat/recenze/"+t.id,text: mine ? "Upravit moji recenzi" : "Napsat recenzi"}),
+        verifyButton("teacher", t, function(){ S.teachers = null; openTeacher(t.id); render(); }),
         isAdmin() ? el("button",{class:"btn ghost danger-btn",text:"Smazat učitele (správce)",onclick:function(e){
           var b = e.currentTarget;
           if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu smazat i se všemi recenzemi?"; return; }
