@@ -1001,12 +1001,130 @@ create trigger quiz_content_reset_verified after insert or update on public.quiz
   for each row execute function public.reset_quiz_verification();
 
 -- =========================================================
+-- Nákup kreditů za peníze (QR platba na účet, správce potvrdí)
+-- =========================================================
+create table if not exists public.site_settings (
+  id int primary key default 1 check (id = 1),
+  bank_iban text check (bank_iban is null or bank_iban ~ '^CZ[0-9]{22}$'),
+  bank_name text check (bank_name is null or char_length(bank_name) <= 60),
+  updated_at timestamptz not null default now()
+);
+insert into public.site_settings (id) values (1) on conflict (id) do nothing;
+
+create table if not exists public.credit_orders (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  package text not null,
+  credits int not null check (credits > 0),
+  price_czk int not null check (price_czk > 0),
+  vs text not null unique check (vs ~ '^[0-9]{8}$'),
+  status text not null default 'pending' check (status in ('pending', 'paid', 'cancelled')),
+  created_at timestamptz not null default now(),
+  paid_at timestamptz,
+  confirmed_by uuid references public.profiles (id) on delete set null
+);
+create index if not exists credit_orders_user_idx on public.credit_orders (user_id, created_at desc);
+create index if not exists credit_orders_status_idx on public.credit_orders (status, created_at);
+
+-- Balíčky jsou jen tady, aby si nikdo nemohl poslat vlastní cenu.
+create or replace function public.credit_package(p text, out credits int, out price_czk int)
+language sql
+immutable
+as $$
+  select c, pr from (values ('S', 10, 50), ('M', 30, 120), ('L', 100, 350)) v(k, c, pr) where k = p;
+$$;
+
+create or replace function public.create_credit_order(p_package text)
+returns table (id bigint, credits int, price_czk int, vs text, created_at timestamptz)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_credits int;
+  v_price int;
+  v_vs text;
+  v_id bigint;
+begin
+  if auth.uid() is null then
+    raise exception 'Nejsi přihlášený.';
+  end if;
+  select p.credits, p.price_czk into v_credits, v_price from public.credit_package(p_package) p;
+  if v_credits is null then
+    raise exception 'Takový balíček neexistuje.';
+  end if;
+  if (select count(*) from public.credit_orders o where o.user_id = auth.uid() and o.status = 'pending') >= 3 then
+    raise exception 'Máš už 3 nezaplacené objednávky. Zaplať je nebo některou zruš.';
+  end if;
+  loop
+    v_vs := lpad((floor(random() * 90000000) + 10000000)::bigint::text, 8, '0');
+    exit when not exists (select 1 from public.credit_orders o where o.vs = v_vs);
+  end loop;
+  insert into public.credit_orders (user_id, package, credits, price_czk, vs)
+    values (auth.uid(), p_package, v_credits, v_price, v_vs)
+    returning credit_orders.id into v_id;
+  return query select o.id, o.credits, o.price_czk, o.vs, o.created_at from public.credit_orders o where o.id = v_id;
+end;
+$$;
+
+create or replace function public.cancel_credit_order(p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.credit_orders set status = 'cancelled'
+    where id = p_id and status = 'pending' and (user_id = auth.uid() or public.is_admin());
+  if not found then
+    raise exception 'Tuhle objednávku nejde zrušit.';
+  end if;
+end;
+$$;
+
+-- Správce potvrdí, že platba dorazila: kredity se připíšou a zapíšou do historie.
+create or replace function public.admin_confirm_order(p_id bigint)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  o public.credit_orders;
+begin
+  if not public.is_admin() then
+    raise exception 'Platby potvrzuje jen správce.';
+  end if;
+  update public.credit_orders set status = 'paid', paid_at = now(), confirmed_by = auth.uid()
+    where id = p_id and status = 'pending'
+    returning * into o;
+  if not found then
+    raise exception 'Objednávka neexistuje nebo už je vyřízená.';
+  end if;
+  update public.profiles set credits = credits + o.credits where id = o.user_id;
+  insert into public.credit_log (user_id, amount, reason, by_id)
+    values (o.user_id, o.credits, 'Nákup kreditů (' || o.price_czk || ' Kč, VS ' || o.vs || ')', auth.uid());
+end;
+$$;
+
+alter table public.site_settings enable row level security;
+alter table public.credit_orders enable row level security;
+drop policy if exists "site_settings: prihlaseni ctou" on public.site_settings;
+create policy "site_settings: prihlaseni ctou" on public.site_settings for select to authenticated using (true);
+drop policy if exists "site_settings: spravce meni" on public.site_settings;
+create policy "site_settings: spravce meni" on public.site_settings for update to authenticated using (public.is_admin()) with check (public.is_admin());
+drop policy if exists "credit_orders: vlastni nebo spravce" on public.credit_orders;
+create policy "credit_orders: vlastni nebo spravce" on public.credit_orders for select to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
   public.ratings, public.plays, public.follows, public.reports,
   public.teachers, public.teacher_reviews, public.materials, public.material_content, public.material_purchases,
-  public.review_unlocks from anon, authenticated;
+  public.review_unlocks, public.site_settings, public.credit_orders from anon, authenticated;
+grant select on public.site_settings, public.credit_orders to authenticated;
+grant update (bank_iban, bank_name, updated_at) on public.site_settings to authenticated;
 grant select on public.teachers to authenticated;
 grant insert (name, department) on public.teachers to authenticated;
 grant update (name, department) on public.teachers to authenticated;
@@ -1081,3 +1199,12 @@ grant execute on function public.set_quiz_verified(uuid, boolean) to authenticat
 revoke all on function public.set_teacher_verified(uuid, boolean) from public;
 revoke execute on function public.set_teacher_verified(uuid, boolean) from anon;
 grant execute on function public.set_teacher_verified(uuid, boolean) to authenticated;
+revoke all on function public.create_credit_order(text) from public;
+revoke execute on function public.create_credit_order(text) from anon;
+grant execute on function public.create_credit_order(text) to authenticated;
+revoke all on function public.cancel_credit_order(bigint) from public;
+revoke execute on function public.cancel_credit_order(bigint) from anon;
+grant execute on function public.cancel_credit_order(bigint) to authenticated;
+revoke all on function public.admin_confirm_order(bigint) from public;
+revoke execute on function public.admin_confirm_order(bigint) from anon;
+grant execute on function public.admin_confirm_order(bigint) to authenticated;

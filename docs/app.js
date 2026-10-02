@@ -76,6 +76,7 @@ function route(){
   if (mt){ openTeacher(mt[1]); go("tdetail", keep); return; }
   var mr = /^#pridat\/recenze(?:\/([0-9a-f-]{36}))?$/i.exec(h);
   if (mr){ openReviewForm(mr[1]); go("revform", keep); return; }
+  if (h === "#kredity"){ openCredits(); go("credits", keep); return; }
   if (h === "#pridat/material"){ openMaterialEditor(null); go("medit", keep); return; }
   if (h === "#pridat/kviz"){ openEditor(null, [], ""); return; }
   if (h === "#materialy"){ S.tab = "materials"; go("home", keep); loadMaterials(); return; }
@@ -123,6 +124,7 @@ function view(){
     case "medit": return materialEditView();
     case "tdetail": return teacherDetailView();
     case "revform": return reviewFormView();
+    case "credits": return creditsView();
     case "lock": return [lockView()];
     case "buy": return buyView();
     case "play": return playView();
@@ -358,7 +360,7 @@ function renderBar(){
       link("#lide","Lidé","people"),
       isAdmin() ? link("#admin","Správa","admin", S.openReports ? el("span",{class:"badge","aria-label":S.openReports+" nevyřešených nahlášení",text:String(S.openReports)}) : null) : null,
       link("#u/"+S.me,"Můj profil","me"),
-      el("a",{href:"#u/"+S.me, class:"credits", title:"Tvoje kredity", text:kr((S.profile && S.profile.credits) || 0)}),
+      el("a",{href:"#kredity", class:"credits", title:"Tvoje kredity, klikni pro dobití", text:kr((S.profile && S.profile.credits) || 0)+" +"}),
       el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout}),
       el("button",{class:"themebtn",type:"button","aria-label":"Přepnout světlý a tmavý vzhled",text: isDark() ? "Světlý" : "Tmavý",onclick:toggleTheme})
     ])
@@ -659,7 +661,7 @@ function buyView(){
         el("div",{},[el("dt",{text:"Cena"}), el("dd",{text:kr(q.price)})]),
         el("div",{},[el("dt",{text:"Máš"}), el("dd",{text:kr(have)})])
       ]),
-      missing > 0 ? el("p",{class:"msg err",text:"Chybí ti "+kr(missing)+". Kredity ti přidá správce."})
+      missing > 0 ? el("p",{class:"msg err"},["Chybí ti "+kr(missing)+". ", el("a",{class:"plink",href:"#kredity",text:"Dobít kredity"})])
                   : el("p",{class:"muted small",text:"Po nákupu ti zůstane "+kr(have - q.price)+". "+(isM ? "Materiál" : "Kvíz")+" pak můžeš otevřít kdykoli znovu. Kredity dostane autor."}),
       msgEl(),
       el("div",{class:"row"},[btn])
@@ -979,6 +981,7 @@ function openAdmin(){
       materials:r[6].count||0, teachers:r[7].count||0, reviews:r[8].count||0,
       tnames:(r[9].data||[]).reduce(function(o,t){ o[t.id] = t.name; return o; }, {})};
     if (!e) S.openReports = S.adm.reports.length;
+    if (!e){ S.adm.orders = []; S.adm.earned = 0; S.adm.settings = {}; var A0 = S.adm; loadAdminPayments(A0).then(function(){ if (S.view === "admin" && S.adm === A0) render(); }); }
     if (S.view === "admin") render();
   });
 }
@@ -1017,6 +1020,7 @@ function adminView(){
       el("div",{},[el("dt",{text:"Kredity v oběhu"}), el("dd",{text:String(credits)})])
     ]),
     msgEl(),
+    el("div",{class:"adminpay"}, adminPayments(A).filter(Boolean)),
     el("h2",{text:"Nahlášený obsah ("+A.reports.length+")"}),
     A.reports.length ? el("ul",{class:"reports"}, A.reports.map(function(rep){
       var kind = rep.quiz_id ? "Kvíz" : rep.material_id ? "Materiál" : "Recenze učitele";
@@ -2070,6 +2074,224 @@ document.addEventListener("keydown", function(e){
   var d = document.querySelector("details.addmenu[open]");
   if (d){ d.removeAttribute("open"); var s = d.querySelector("summary"); if (s) s.focus(); }
 });
+
+
+/* =========================================================
+   Nákup kreditů: QR platba na účet, správce potvrdí příchod platby
+   ========================================================= */
+var PACKAGES = [
+  {key:"S", credits:10, price:50},
+  {key:"M", credits:30, price:120},
+  {key:"L", credits:100, price:350, best:true}
+];
+
+/* IBAN: přijme CZ IBAN nebo české číslo účtu „předčíslí-číslo/kód banky“. */
+function mod97(digits){ var r = 0; for (var i = 0; i < digits.length; i += 7) r = Number(String(r) + digits.slice(i, i + 7)) % 97; return r; }
+function toCzIban(input){
+  var s = (input || "").replace(/\s+/g, "").toUpperCase();
+  if (/^CZ\d{22}$/.test(s)) return mod97(s.slice(4) + "1235" + s.slice(2, 4)) === 1 ? s : null;
+  var m = /^(?:(\d{1,6})-)?(\d{2,10})\/(\d{4})$/.exec(s);
+  if (!m) return null;
+  var bban = m[3] + ("000000" + (m[1] || "")).slice(-6) + ("0000000000" + m[2]).slice(-10);
+  var check = 98 - mod97(bban + "123500");
+  return "CZ" + (check < 10 ? "0" : "") + check + bban;
+}
+function ibanToCz(iban){
+  if (!iban) return "";
+  var prefix = iban.slice(8, 14).replace(/^0+/, ""), num = iban.slice(14).replace(/^0+/, "");
+  return (prefix ? prefix + "-" : "") + num + "/" + iban.slice(4, 8);
+}
+function fmtIban(iban){ return (iban || "").replace(/(.{4})/g, "$1 ").trim(); }
+function plainAscii(t){ return (t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[*]/g, "").toUpperCase(); }
+function spdString(settings, order){
+  return "SPD*1.0*ACC:" + settings.bank_iban + "*AM:" + order.price_czk.toFixed(2) + "*CC:CZK*X-VS:" + order.vs
+    + "*MSG:CZU HUB KREDITY" + (settings.bank_name ? "*RN:" + plainAscii(settings.bank_name).slice(0, 35) : "");
+}
+function qrImage(text){
+  if (typeof window.qrcode !== "function") return el("p",{class:"muted small",text:"QR kód se nepovedlo vytvořit, zadej platbu ručně."});
+  var qr = window.qrcode(0, "M"); qr.addData(text); qr.make();
+  return el("img",{class:"qr",src:qr.createDataURL(6, 8),alt:"QR kód pro platbu z bankovní aplikace",width:"240",height:"240"});
+}
+function copyField(label, value, display){
+  var btn = el("button",{class:"btn link small",type:"button",text:"Kopírovat",onclick:function(){
+    if (navigator.clipboard) navigator.clipboard.writeText(value).then(function(){ btn.textContent = "Zkopírováno"; setTimeout(function(){ if (btn.isConnected) btn.textContent = "Kopírovat"; }, 1500); });
+  }});
+  return el("div",{class:"payrow"},[el("dt",{text:label}), el("dd",{},[el("strong",{text:display || value}), btn])]);
+}
+
+var creditsSeq = 0;
+function openCredits(){
+  var seq = ++creditsSeq;
+  S.cr = {loading:true, active:null};
+  Promise.all([
+    sb.from("site_settings").select("bank_iban,bank_name").eq("id", 1).maybeSingle(),
+    sb.from("credit_orders").select("id,credits,price_czk,vs,status,created_at,paid_at").eq("user_id", S.me).order("created_at",{ascending:false}).limit(30)
+  ]).then(function(r){
+    if (seq !== creditsSeq) return;
+    var e = r[0].error || r[1].error;
+    S.cr = e ? {error:dbErrText(e)} : {settings:r[0].data || {}, orders:r[1].data || [], active:null};
+    if (S.view === "credits") render();
+  });
+  refreshMe();
+}
+
+function creditsView(){
+  var C = S.cr || {};
+  if (C.loading) return [el("div",{class:"panel"},[el("h2",{text:"Načítám…"})])];
+  if (C.error) return [el("p",{class:"msg err",text:C.error})];
+  var have = (S.profile && S.profile.credits) || 0, ready = !!(C.settings && C.settings.bank_iban);
+  var head = el("div",{class:"top"},[
+    el("div",{},[el("span",{class:"label",text:"Kredity"}), el("h1",{text:"Koupit kredity"})]),
+    el("div",{class:"balance"},[el("span",{class:"small muted",text:"Teď máš"}), el("strong",{text:kr(have)})])
+  ]);
+  if (!ready) return [head, el("div",{class:"panel"},[el("h2",{text:"Nákup kreditů zatím není spuštěný"}), el("p",{class:"muted",text:"Správce ještě nenastavil účet pro platby. Zkus to později."})])];
+
+  if (C.active) return [head, paymentPanel(C, C.active)];
+
+  var packs = el("div",{class:"packs"}, PACKAGES.map(function(p){
+    var per = (p.price / p.credits).toFixed(1).replace(".", ",").replace(",0", "");
+    var btn = el("button",{class:"btn block",type:"button",text:"Koupit za "+p.price+" Kč",onclick:function(){
+      btn.disabled = true; btn.textContent = "Vytvářím objednávku…";
+      sb.rpc("create_credit_order",{p_package:p.key}).then(function(r){
+        if (r.error){ btn.disabled = false; btn.textContent = "Koupit za "+p.price+" Kč"; return err("err", dbErrText(r.error)); }
+        var o = (r.data || [])[0]; if (!o) return err("err","Objednávku se nepovedlo vytvořit.");
+        o.status = "pending"; C.orders.unshift(o); C.active = o; S.msg = null; render(); window.scrollTo(0,0);
+      });
+    }});
+    return el("div",{class:"pack"+(p.best ? " best" : "")},[
+      p.best ? el("span",{class:"pill verified",text:"Nejvýhodnější"}) : null,
+      el("div",{class:"packcredits"},[el("strong",{text:String(p.credits)}), el("span",{text:" kreditů"})]),
+      el("div",{class:"packprice",text:p.price+" Kč"}),
+      el("div",{class:"muted small",text:per+" Kč za kredit"}),
+      btn
+    ]);
+  }));
+
+  var orders = C.orders.length ? el("ul",{class:"history"}, C.orders.map(function(o){
+    var st = o.status === "paid" ? el("span",{class:"pill free",text:"Připsáno"}) : o.status === "cancelled" ? el("span",{class:"pill kind",text:"Zrušeno"}) : el("span",{class:"pill price",text:"Čeká na platbu"});
+    return el("li",{},[
+      el("span",{class:"txt"},[el("span",{text:kr(o.credits)+" za "+o.price_czk+" Kč"}), el("span",{class:"muted small",text:"VS "+o.vs+" · "+fmtDate(o.created_at)})]),
+      el("span",{class:"row",style:"gap:10px"},[st, o.status === "pending" ? el("button",{class:"btn link small",text:"Zobrazit platbu",onclick:function(){ C.active = o; render(); window.scrollTo(0,0); }}) : null])
+    ]);
+  })) : el("p",{class:"muted",text:"Zatím žádné."});
+
+  return [
+    head,
+    msgEl(),
+    el("p",{class:"muted",text:"Za kredity si odemkneš placené kvízy, materiály a recenze učitelů. Zaplatíš převodem přes QR kód v bankovní aplikaci, kredity se připíšou, jakmile platba dorazí."}),
+    packs,
+    el("h2",{text:"Moje objednávky"}),
+    orders
+  ];
+}
+
+function paymentPanel(C, o){
+  var s = C.settings, cz = ibanToCz(s.bank_iban);
+  if (o.status !== "pending") return el("div",{class:"panel"},[el("p",{text:"Tahle objednávka už je vyřízená."}), el("button",{class:"btn ghost",text:"Zpět",onclick:function(){ C.active = null; render(); }})]);
+  return el("section",{class:"panel pay"},[
+    el("span",{class:"label",text:"Objednávka "+kr(o.credits)}),
+    el("h2",{text:"Zaplať "+o.price_czk+" Kč převodem"}),
+    el("div",{class:"paygrid"},[
+      el("div",{class:"qrbox"},[qrImage(spdString(s, o)), el("p",{class:"muted small",text:"Naskenuj v bankovní aplikaci (QR platba)."})]),
+      el("dl",{class:"paydl"},[
+        copyField("Číslo účtu", cz, cz),
+        copyField("IBAN", s.bank_iban, fmtIban(s.bank_iban)),
+        copyField("Částka", String(o.price_czk), o.price_czk+" Kč"),
+        copyField("Variabilní symbol", o.vs),
+        s.bank_name ? el("div",{class:"payrow"},[el("dt",{text:"Příjemce"}), el("dd",{},[el("strong",{text:s.bank_name})])]) : null
+      ])
+    ]),
+    el("p",{class:"paynote",text:"Důležité: zadej přesně tenhle variabilní symbol, podle něj platbu poznáme. Kredity se připíšou, jakmile platba dorazí a správce ji potvrdí, obvykle do 1–2 pracovních dnů."}),
+    msgEl(),
+    el("div",{class:"row"},[
+      el("button",{class:"btn",text:"Hotovo, zaplaceno",onclick:function(){ C.active = null; S.msg = {kind:"ok", text:"Díky! Jakmile platba dorazí, kredity se ti připíšou."}; render(); }}),
+      el("button",{class:"btn ghost danger-btn",text:"Zrušit objednávku",onclick:function(e){
+        var b = e.currentTarget; if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu zrušit?"; return; }
+        sb.rpc("cancel_credit_order",{p_id:o.id}).then(function(r){
+          if (r.error) return err("err", dbErrText(r.error));
+          o.status = "cancelled"; C.active = null; S.msg = {kind:"ok", text:"Objednávka zrušena."}; render();
+        });
+      }})
+    ])
+  ]);
+}
+
+/* Správa: čekající platby a účet pro platby. */
+function loadAdminPayments(A){
+  return Promise.all([
+    sb.from("credit_orders").select("id,credits,price_czk,vs,created_at,user_id,profiles!credit_orders_user_id_fkey(nickname)").eq("status","pending").order("created_at",{ascending:true}).limit(300),
+    sb.from("credit_orders").select("price_czk").eq("status","paid").limit(10000),
+    sb.from("site_settings").select("bank_iban,bank_name").eq("id", 1).maybeSingle()
+  ]).then(function(r){
+    A.orders = r[0].data || []; A.earned = (r[1].data || []).reduce(function(a,x){ return a + x.price_czk; }, 0);
+    A.settings = r[2].data || {}; A.payErr = (r[0].error || r[1].error || r[2].error) ? dbErrText(r[0].error || r[1].error || r[2].error) : null;
+  });
+}
+
+function adminPayments(A){
+  var acc = el("input",{type:"text",id:"adm-iban",placeholder:"Např. 123456789/0800 nebo CZ65 0800 …"});
+  acc.value = A.settings && A.settings.bank_iban ? ibanToCz(A.settings.bank_iban) : "";
+  var nm = el("input",{type:"text",id:"adm-bankname",maxlength:"60",placeholder:"Jméno majitele účtu"});
+  nm.value = (A.settings && A.settings.bank_name) || "";
+  var save = el("button",{class:"btn sm",type:"submit",text:"Uložit účet"});
+  var form = el("form",{class:"panel",onsubmit:function(e){
+    e.preventDefault();
+    var iban = toCzIban(acc.value);
+    if (!iban) return err("err","Tohle číslo účtu nevypadá správně. Zadej ho jako 123456789/0800 nebo jako IBAN.","pay");
+    save.disabled = true;
+    sb.from("site_settings").update({bank_iban:iban, bank_name:nm.value.trim() || null, updated_at:new Date().toISOString()}).eq("id", 1).then(function(r){
+      save.disabled = false;
+      if (r.error) return err("err", dbErrText(r.error), "pay");
+      A.settings = {bank_iban:iban, bank_name:nm.value.trim() || null};
+      err("ok","Účet uložen: "+ibanToCz(iban)+" ("+fmtIban(iban)+").","pay");
+    });
+  }},[
+    el("h2",{text:"Účet pro platby"}),
+    el("p",{class:"muted small",text:"Na tenhle účet budou lidi posílat peníze za kredity. Uvidí ho každý, kdo si kredity kupuje."}),
+    el("div",{class:"grid2 even"},[
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-iban",text:"Číslo účtu"}), acc]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-bankname",text:"Příjemce"}), nm])
+    ]),
+    msgEl("pay"),
+    el("div",{class:"row"},[save])
+  ]);
+
+  var list = A.orders.length ? el("ul",{class:"reports"}, A.orders.map(function(o){
+    return el("li",{class:"panel"},[
+      el("div",{class:"row",style:"justify-content:space-between"},[
+        el("span",{},[profileLink(o.user_id, o.profiles && o.profiles.nickname), " chce "+kr(o.credits)]),
+        el("span",{class:"muted small",text:fmtDate(o.created_at)})
+      ]),
+      el("div",{class:"row",style:"gap:18px"},[el("span",{},["Částka: ", el("strong",{text:o.price_czk+" Kč"})]), el("span",{},["VS: ", el("strong",{text:o.vs})])]),
+      el("div",{class:"row"},[
+        el("button",{class:"btn sm",text:"Platba přišla, připsat",onclick:function(e){
+          var b = e.currentTarget; b.disabled = true;
+          sb.rpc("admin_confirm_order",{p_id:o.id}).then(function(r){
+            if (r.error){ b.disabled = false; return err("err", dbErrText(r.error)); }
+            A.orders = A.orders.filter(function(x){ return x.id !== o.id; }); A.earned += o.price_czk;
+            if (o.user_id === S.me) refreshMe();
+            err("ok","Připsáno "+kr(o.credits)+" uživateli "+((o.profiles && o.profiles.nickname) || "")+".");
+          });
+        }}),
+        el("button",{class:"btn ghost sm danger-btn",text:"Zrušit",onclick:function(e){
+          var b = e.currentTarget; if (!b.dataset.armed){ b.dataset.armed = "1"; b.textContent = "Opravdu zrušit?"; return; }
+          sb.rpc("cancel_credit_order",{p_id:o.id}).then(function(r){
+            if (r.error) return err("err", dbErrText(r.error));
+            A.orders = A.orders.filter(function(x){ return x.id !== o.id; }); err("ok","Objednávka zrušena.");
+          });
+        }})
+      ])
+    ]);
+  })) : el("p",{class:"muted",text:"Žádné čekající platby."});
+
+  return [
+    el("h2",{text:"Platby za kredity ("+A.orders.length+")"}),
+    el("p",{class:"muted small",text:"Porovnej variabilní symbol a částku s pohybem na účtu a teprve pak připiš. Celkem zaplaceno: "+A.earned+" Kč."}),
+    A.payErr ? el("p",{class:"msg err",text:A.payErr}) : null,
+    list,
+    form
+  ];
+}
 
 /* ---------- start ---------- */
 function onSession(session){

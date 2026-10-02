@@ -489,3 +489,28 @@ body.authpage{background:var(--bg)}
 .btn.ghost.danger-btn{color:var(--bad);border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
 .btn.ghost.danger-btn:hover:not(:disabled){background:var(--bad-soft);border-color:var(--bad)}
 .pill.pending{background:var(--soft);color:var(--muted);border:1px dashed color-mix(in srgb, var(--muted) 45%, transparent);font-weight:600}
+
+/* ---------- nákup kreditů ---------- */
+.balance{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.balance strong{font-family:var(--display);font-size:1.6rem;color:var(--accent-strong);letter-spacing:-.02em}
+.packs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.packs{grid-template-columns:minmax(0,1fr)}}
+.pack{position:relative;display:flex;flex-direction:column;gap:6px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+.pack.best{border-color:var(--info);box-shadow:0 0 0 3px color-mix(in srgb, var(--info) 15%, transparent), var(--shadow)}
+.pack .pill{position:absolute;top:-10px;right:14px}
+.packcredits strong{font-family:var(--display);font-size:2.4rem;letter-spacing:-.03em;color:var(--accent-strong)}
+.packcredits span{color:var(--muted);font-weight:700}
+.packprice{font-family:var(--display);font-size:1.3rem;font-weight:600}
+.pack .btn{margin-top:8px}
+.panel.pay{border-top:4px solid var(--accent)}
+.paygrid{display:grid;grid-template-columns:auto minmax(0,1fr);gap:24px;align-items:start}
+@media (max-width:640px){.paygrid{grid-template-columns:minmax(0,1fr)}}
+.qrbox{display:flex;flex-direction:column;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px}
+.qr{width:220px;height:220px;image-rendering:pixelated}
+.paydl{margin:0;display:flex;flex-direction:column;gap:10px}
+.payrow{display:flex;flex-direction:column;gap:2px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.payrow dt{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.payrow dd{margin:0;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+.payrow dd strong{font-family:var(--display);font-size:1.15rem;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.paynote{background:var(--warn-soft);border-radius:10px;padding:10px 14px;font-size:.95rem}
+.adminpay{display:flex;flex-direction:column;gap:14px}
