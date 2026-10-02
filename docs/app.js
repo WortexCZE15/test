@@ -153,6 +153,19 @@ function wordmark(sub){
   ]);
 }
 
+/* Jednoduché čárové ikonky (24×24). */
+var ICONS = {
+  quiz: ["M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M8.5 12.5l2.2 2.2 4.8-5"],
+  file: ["M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z", "M14 3v5h5", "M9 13h6", "M9 17h4"],
+  link: ["M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"],
+  text: ["M5 6h14", "M5 10h14", "M5 14h14", "M5 18h9"],
+  teacher: ["M2.5 9.5L12 5l9.5 4.5L12 14z", "M6.5 11.8V16c0 1.4 2.5 3 5.5 3s5.5-1.6 5.5-3v-4.2", "M21.5 9.5v5"]
+};
+function icon(name, size){
+  return svgEl("svg",{viewBox:"0 0 24 24",width:String(size||22),height:String(size||22),fill:"none",stroke:"currentColor","stroke-width":"1.8","stroke-linecap":"round","stroke-linejoin":"round","aria-hidden":"true",class:"ico"},
+    (ICONS[name] || ICONS.file).map(function(d){ return svgEl("path",{d:d}); }));
+}
+
 function authView(){
   var reg = S.authTab === "register";
   var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true,placeholder:"jmeno@studenti.czu.cz"});
@@ -184,7 +197,12 @@ function authView(){
       feat("Recenze učitelů", "ať víš, do čeho jdeš."),
       feat("Kredity", "za to, co nasdílíš.")
     ]),
-    el("p",{class:"heronote",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."})
+    el("p",{class:"heronote",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."}),
+    svgEl("svg",{viewBox:"0 0 40 40",class:"herodeco","aria-hidden":"true"},[
+      svgEl("path",{d:"M20 38V18",stroke:"currentColor","stroke-width":"1.4","stroke-linecap":"round",fill:"none"}),
+      svgEl("path",{d:"M20 22c-6.5 0-10-4.2-10-10 6 0 10 3.6 10 10z",fill:"none",stroke:"currentColor","stroke-width":"1.2"}),
+      svgEl("path",{d:"M20 18c0-6.8 4.3-11 11-11 0 6.6-4.1 11-11 11z",fill:"none",stroke:"currentColor","stroke-width":"1.2"})
+    ])
   ]);
   return [el("div",{class:"authwrap"},[hero, form])];
 }
@@ -304,9 +322,9 @@ function renderBar(){
       el("details",{class:"addmenu"},[
         el("summary",{class:"btn addbtn","aria-current": cur === "add" ? "page" : null,text:"+ Přidat"}),
         el("div",{class:"menu",role:"menu"},[
-          el("a",{href:"#pridat/recenze",role:"menuitem"},[el("strong",{text:"Recenze učitele"}), el("span",{text:"Ohodnoť vyučujícího"})]),
-          el("a",{href:"#pridat/material",role:"menuitem"},[el("strong",{text:"Materiál"}), el("span",{text:"Výpisky, PDF, odkaz"})]),
-          el("a",{href:"#pridat/kviz",role:"menuitem"},[el("strong",{text:"Kvíz"}), el("span",{text:"Otázky na procvičení"})])
+          el("a",{href:"#pridat/recenze",role:"menuitem"},[el("span",{class:"cardicon sm"},[icon("teacher",18)]), el("span",{class:"mi"},[el("strong",{text:"Recenze učitele"}), el("span",{text:"Ohodnoť vyučujícího"})])]),
+          el("a",{href:"#pridat/material",role:"menuitem"},[el("span",{class:"cardicon sm"},[icon("file",18)]), el("span",{class:"mi"},[el("strong",{text:"Materiál"}), el("span",{text:"Výpisky, PDF, odkaz"})])]),
+          el("a",{href:"#pridat/kviz",role:"menuitem"},[el("span",{class:"cardicon sm"},[icon("quiz",18)]), el("span",{class:"mi"},[el("strong",{text:"Kvíz"}), el("span",{text:"Otázky na procvičení"})])])
         ])
       ]),
       link("#"+({quizzes:"kvizy",materials:"materialy",teachers:"ucitele"}[S.tab] || "kvizy"),"Procházet","home"),
@@ -331,6 +349,7 @@ function quizCard(q, showAuthor){
     q.locked ? el("span",{class:"pill",text:"Na heslo"}) : null
   ];
   var card = el("a",{class:"card",href:"#q/"+q.id},[
+    el("span",{class:"cardicon"},[icon("quiz")]),
     el("span",{class:"txt"},[
       el("span",{class:"row",style:"gap:6px"}, pills),
       el("strong",{text:q.title||"Bez názvu"}),
@@ -1426,6 +1445,7 @@ function fmtSize(b){ if (!b) return ""; return b < 1048576 ? Math.max(1, Math.ro
 function materialCard(m, showAuthor){
   var mine = m.author_id === S.me, owned = !!S.ownedM[m.id];
   var card = el("a",{class:"card",href:"#m/"+m.id},[
+    el("span",{class:"cardicon"},[icon(m.kind === "link" ? "link" : m.kind === "text" ? "text" : "file")]),
     el("span",{class:"txt"},[
       el("span",{class:"row",style:"gap:6px"},[
         m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,

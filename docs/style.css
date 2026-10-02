@@ -315,3 +315,109 @@ select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .tabs.seg .tab{padding:8px 10px}
 .btn.block{width:100%;padding:12px 18px;font-size:1.1rem}
 @media (max-width:760px){.authhero{padding:28px 22px;gap:16px} .authhero h2{font-size:1.8rem} .authform{padding:26px 22px} .heronote{margin-top:4px}}
+
+/* =========================================================
+   Estetický průchod: jemnější paleta, Sora na nadpisy, průsvitná lišta,
+   ikonky, měkké štítky a karty s lehkým zdvihem
+   ========================================================= */
+:root{
+  --bg:#f8faf4; --surface:#ffffff; --soft:#f2f6ec; --ink:#18210f; --muted:#667259; --line:#e4eadb;
+  --accent:#4a8a1c; --accent-strong:#356d0f; --accent-soft:#ebf3df; --accent-2:#9fd06b;
+  --brand:#1f4210; --brand-ink:#ffffff;
+  --bar:rgba(255,255,255,.82); --bar-ink:#1f4210; --bar-muted:#6c7863; --bar-hover:#eef4e5;
+  --warn:#9a6a00; --warn-soft:#fbf3dc;
+  --shadow:0 1px 2px rgba(24,33,15,.04), 0 6px 20px rgba(24,33,15,.05);
+  --shadow-lift:0 2px 4px rgba(24,33,15,.05), 0 14px 34px rgba(31,66,16,.12);
+  --display:"Sora",ui-sans-serif,system-ui,sans-serif;
+  --radius:16px;
+}
+:root[data-theme="dark"]{
+  --bg:#0e130b; --surface:#151d10; --soft:#1a2414; --line:#26321e; --muted:#9aa78c;
+  --accent-soft:#1f2e16; --bar:rgba(21,29,16,.85); --bar-ink:#d6ebc1; --bar-hover:#1f2e16; --brand:#2f5d14;
+  --shadow:none; --shadow-lift:0 10px 30px rgba(0,0,0,.35);
+}
+body{background:var(--bg);-webkit-font-smoothing:antialiased}
+h1{font-size:2.15rem;font-weight:700;letter-spacing:-.02em}
+h2{font-size:1.35rem;font-weight:600;letter-spacing:-.01em}
+.top h1::after{display:none}
+.top h1{padding-bottom:0}
+.label{font-family:var(--body);font-size:.74rem;letter-spacing:.12em}
+
+/* lišta */
+#bar{background:var(--bar);-webkit-backdrop-filter:saturate(1.6) blur(14px);backdrop-filter:saturate(1.6) blur(14px);border-top:0;border-bottom:1px solid var(--line);box-shadow:none}
+#bar::before{content:"";display:block;height:3px;background:linear-gradient(90deg,var(--brand),var(--accent) 55%,var(--accent-2))}
+.barin{padding-block:12px}
+.wordmark .wm{font-size:1.3rem;letter-spacing:-.02em}
+.wordmark .hub{font-size:.95rem;padding:2px 7px 3px;border-radius:6px}
+.navlink{font-family:var(--body);font-weight:700;font-size:.98rem;letter-spacing:0;padding:7px 13px;border-radius:999px;transition:background .15s,color .15s}
+.navlink[aria-current="page"]{background:var(--accent-soft);color:var(--accent-strong)}
+.btn.addbtn{border-radius:999px;padding:7px 16px;box-shadow:0 4px 14px rgba(74,138,28,.25)}
+.credits{border-radius:999px;background:var(--surface);border-color:var(--line)}
+.themebtn{border-radius:999px}
+
+/* tlačítka a pole */
+.btn{font-family:var(--body);font-weight:700;letter-spacing:0;border-radius:12px;transition:transform .12s, box-shadow .15s, background .15s}
+.btn:not(.link):not(.ghost):hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 16px rgba(74,138,28,.25)}
+.btn.ghost{background:var(--surface);border-color:var(--line);color:var(--accent-strong)}
+.btn.ghost:hover:not(:disabled){border-color:var(--accent);background:var(--accent-soft)}
+input[type=text],input[type=email],input[type=password],input[type=search],input[type=number],input[type=url],textarea,select{background:var(--surface);border:1px solid var(--line);border-radius:12px;transition:border-color .15s, box-shadow .15s}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent)}
+input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
+
+/* panely, karty, štítky */
+.panel{border-radius:var(--radius);border-color:var(--line);box-shadow:var(--shadow);padding:24px}
+.panel.detail,.panel.profile,.panel.buy,.panel.auth{border-top:1px solid var(--line)}
+.card,.person{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;gap:16px;box-shadow:var(--shadow);transition:transform .15s, box-shadow .2s, border-color .2s}
+.card:hover,.person:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift);border-color:color-mix(in srgb, var(--accent) 40%, var(--line));background:var(--surface)}
+.card .txt strong,.person .txt strong{font-family:var(--display);font-size:1.12rem;font-weight:600;letter-spacing:-.01em}
+.card .go,.person .go{font-family:var(--body);font-size:.9rem;color:var(--accent-strong);background:var(--accent-soft);padding:6px 12px;border-radius:999px}
+.cardicon{flex:none;width:46px;height:46px;border-radius:14px;display:grid;place-items:center;color:var(--accent-strong);background:linear-gradient(145deg,var(--accent-soft),color-mix(in srgb, var(--accent-2) 30%, var(--accent-soft)))}
+.cardicon.sm{width:36px;height:36px;border-radius:11px}
+.card.teacher .avatar{width:46px;height:46px;border-radius:14px;font-size:1.2rem}
+.cardmeta{padding-left:10px}
+.pill{font-family:var(--body);font-size:.7rem;letter-spacing:.07em;border-radius:999px;padding:3px 9px;font-weight:700}
+.pill.subject{background:color-mix(in srgb, var(--brand) 10%, var(--surface));color:var(--brand);border:1px solid color-mix(in srgb, var(--brand) 18%, transparent)}
+:root[data-theme="dark"] .pill.subject{color:var(--bar-ink)}
+.pill.price{background:var(--warn-soft);color:var(--warn)}
+.pill.free{background:var(--accent-soft);color:var(--accent-strong);border:0}
+.pill.mine{background:var(--accent);color:#fff}
+.pill.kind{background:var(--soft);border-color:var(--line);color:var(--muted)}
+.tag{border-radius:999px;padding:2px 9px;background:var(--soft);color:var(--muted)}
+.stats div{border-radius:12px;padding:12px 14px}
+.stats dd{font-family:var(--display);letter-spacing:-.02em}
+.tabs{border-radius:999px;padding:4px}
+.tabs .tab{border-radius:999px;font-family:var(--body);font-weight:700}
+.tabs.browse{border-radius:0}
+.tabs.browse .tab{font-family:var(--body);font-weight:700;border-radius:0}
+.avatar{background:linear-gradient(145deg,var(--accent-soft),color-mix(in srgb, var(--accent-2) 35%, var(--accent-soft)))}
+.ans{border-radius:14px;transition:border-color .15s, transform .12s}
+.ans:hover:not(:disabled){transform:translateY(-1px)}
+.ans .letter{border-radius:10px}
+
+/* menu Přidat */
+.addmenu .menu{border-radius:16px;border-top:1px solid var(--line);padding:8px;min-width:270px;box-shadow:0 18px 50px rgba(24,33,15,.18)}
+.addmenu .menu a{flex-direction:row;align-items:center;gap:12px;border-radius:12px}
+.addmenu .menu .mi{display:flex;flex-direction:column;gap:1px}
+.addmenu .menu a strong{font-family:var(--display);font-size:1rem;font-weight:600}
+
+/* přihlášení */
+.authwrap{border-radius:24px;box-shadow:0 2px 6px rgba(24,33,15,.05), 0 30px 80px rgba(31,66,16,.14)}
+.authhero{overflow:hidden;background:
+    radial-gradient(circle at 90% 8%, rgba(159,208,107,.45), transparent 40%),
+    radial-gradient(circle at 0% 100%, rgba(159,208,107,.25), transparent 50%),
+    linear-gradient(155deg,#3f7d18 0%,#24500f 58%,#163409 100%)}
+.authhero h2{font-family:var(--display);font-weight:700;letter-spacing:-.03em;font-size:2.4rem}
+.herodeco{position:absolute;right:-30px;bottom:-40px;width:260px;height:260px;color:rgba(255,255,255,.10);z-index:0!important}
+.authform .tabs.seg{border-radius:14px}
+.authform .tabs.seg .tab{border-radius:10px}
+@media (prefers-reduced-motion: reduce){.card,.person,.btn,.ans{transition:none}.card:hover,.person:hover,.btn:hover,.ans:hover{transform:none!important}}
+@media (max-width:600px){
+  .barin{padding-block:8px;gap:8px}
+  .brand .wordmark small{display:none}
+  .navlinks{gap:2px 0;row-gap:6px}
+  .navlink{padding:6px 9px;font-size:.92rem}
+  .btn.addbtn{padding:6px 12px;font-size:.92rem}
+  .credits{font-size:.85rem;padding:4px 9px}
+  .themebtn{font-size:.78rem;padding:3px 8px}
+  h1{font-size:1.8rem}
+}
