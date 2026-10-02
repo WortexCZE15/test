@@ -488,3 +488,4 @@ body.authpage{background:var(--bg)}
 .check input{width:18px;height:18px;accent-color:var(--info)}
 .btn.ghost.danger-btn{color:var(--bad);border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
 .btn.ghost.danger-btn:hover:not(:disabled){background:var(--bad-soft);border-color:var(--bad)}
+.pill.pending{background:var(--soft);color:var(--muted);border:1px dashed color-mix(in srgb, var(--muted) 45%, transparent);font-weight:600}

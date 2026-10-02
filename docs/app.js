@@ -239,6 +239,7 @@ function isAdmin(){ return !!(S.profile && S.profile.is_admin); }
 function isMod(){ return !!(S.profile && (S.profile.is_moderator || S.profile.is_admin)); }
 function roleBadges(p){ return [p && p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null, p && p.is_moderator ? el("span",{class:"pill mod",text:"Moderátor"}) : null]; }
 function verifiedPill(){ return el("span",{class:"pill verified",text:"✓ Ověřeno moderátorem"}); }
+function statusPill(item){ return item.verified_at ? verifiedPill() : el("span",{class:"pill pending",text:"Čeká na schválení moderátorem"}); }
 /* Ověření moderátorem: společné pro kvízy, materiály a učitele. */
 var VERIFY = {
   quiz:     {rpc:"set_quiz_verified",     arg:"p_quiz",     what:"Kvíz",     ok:"Kvíz je označený jako ověřený."},
@@ -368,7 +369,7 @@ function renderBar(){
 function quizCard(q, showAuthor){
   var mine = q.author_id === S.me, n = q.question_count || 0, owned = !!S.owned[q.id];
   var pills = [
-    q.verified_at ? verifiedPill() : null,
+    statusPill(q),
     q.subject ? el("span",{class:"pill subject",text:q.subject}) : null,
     q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
     mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null,
@@ -513,7 +514,7 @@ function detailView(){
 
   var head = el("section",{class:"panel detail"},[
     el("span",{class:"row",style:"gap:6px"},[
-      q.verified_at ? verifiedPill() : null,
+      statusPill(q),
       q.subject ? el("span",{class:"pill subject",text:q.subject}) : null,
       q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
       S.owned[q.id] && !mine ? el("span",{class:"pill mine",text:"Koupeno"}) : null,
@@ -1496,7 +1497,7 @@ function materialCard(m, showAuthor){
     el("span",{class:"cardicon"},[icon(m.kind === "link" ? "link" : m.kind === "text" ? "text" : "file")]),
     el("span",{class:"txt"},[
       el("span",{class:"row",style:"gap:6px"},[
-        m.verified_at ? verifiedPill() : null,
+        statusPill(m),
         m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
         el("span",{class:"pill kind",text:KIND_LABEL[m.kind] || "Materiál"}),
         m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
@@ -1561,7 +1562,7 @@ function teacherCard(t){
   return el("a",{class:"card teacher",href:"#t/"+t.id},[
     el("span",{class:"avatar","aria-hidden":"true",text:t.name.replace(/^(?:(?:doc|prof|ing|mgr|bc|rndr|phdr|judr|mudr|ph\.d|csc|drsc|dr)\.?\s+)+/i, "").charAt(0).toUpperCase()}),
     el("span",{class:"txt"},[
-      el("span",{class:"row",style:"gap:8px"},[el("strong",{text:t.name}), t.verified_at ? verifiedPill() : null]),
+      el("span",{class:"row",style:"gap:8px"},[el("strong",{text:t.name}), statusPill(t)]),
       t.department ? el("span",{class:"muted small",text:t.department}) : null,
       el("span",{class:"small"},[el("span",{class: t.rating_count ? "stars" : "muted",text: t.rating_count ? starsText(t.rating_avg)+" "+Number(t.rating_avg).toFixed(1).replace(".", ",") : "Bez recenzí"}),
         t.rating_count ? el("span",{class:"muted",text:" · "+t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")}) : null])
@@ -1645,7 +1646,7 @@ function materialDetailView(){
                      : el("button",{class:"btn",text:"Koupit za "+kr(m.price),onclick:function(){ S.buyFor = {type:"material", item:m}; go("buy"); }});
   var head = el("section",{class:"panel detail"},[
     el("span",{class:"row",style:"gap:6px"},[
-      m.verified_at ? verifiedPill() : null,
+      statusPill(m),
       m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
       el("span",{class:"pill kind",text:KIND_LABEL[m.kind]}),
       m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
@@ -1888,7 +1889,7 @@ function teacherDetailView(){
   return [
     el("div",{},[el("a",{href:"#ucitele",class:"plink small",text:"← Všichni učitelé"})]),
     el("section",{class:"panel detail"},[
-      el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text:"Učitel"}), t.verified_at ? verifiedPill() : null]),
+      el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text:"Učitel"}), statusPill(t)]),
       el("h1",{text:t.name}),
       t.department ? el("p",{class:"muted",text:t.department}) : null,
       verifiedBox(T, t, "teacher"),
