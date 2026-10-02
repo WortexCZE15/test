@@ -11,7 +11,7 @@ var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 /* view: loading | auth | home | lock | play | edit */
 var S = { view:"loading", authTab:"login", session:null, me:null, profile:null,
-          quizzes:[], listError:null, msg:null, people:null, peopleQ:"", prof:null, play:null, edit:null, lockFor:null, filter:"", busy:false };
+          quizzes:[], listError:null, msg:null, people:null, peopleQ:"", prof:null, owned:{}, buyFor:null, play:null, edit:null, lockFor:null, filter:"", busy:false };
 
 /* ---------- šifrování (heslo -> PBKDF2 -> AES-GCM) ---------- */
 var enc = new TextEncoder(), dec = new TextDecoder();
@@ -76,6 +76,9 @@ function dbErrText(e){
   if (/JWT|expired|not authenticated/i.test(m)) return "Přihlášení vypršelo. Odhlas se a přihlas znovu.";
   if (/row-level security|permission denied/i.test(m)) return "Na tohle nemáš oprávnění.";
   if (/Failed to fetch|NetworkError/i.test(m)) return "Nepovedlo se spojit s databází. Zkontroluj internet a zkus to znovu.";
+  if (/NEDOSTATEK_KREDITU/.test(m)) return "Nemáš dost kreditů. Kredity ti přidá správce.";
+  if (/column .* does not exist|Could not find the .* (column|table|function)|relation .* does not exist/i.test(m)) return "Databáze ještě nemá nejnovější nastavení. Správce musí znovu spustit supabase-setup.sql.";
+  if (/^[A-ZÁ-Ž].*\.$/.test(m) && /[ěščřžýáíéůú]/i.test(m)) return m;
   return "Něco se nepovedlo: " + (m || "neznámá chyba") + ".";
 }
 function authErrText(e){
@@ -98,6 +101,7 @@ function view(){
     case "people": return peopleView();
     case "profile": return profileView();
     case "lock": return [lockView()];
+    case "buy": return buyView();
     case "play": return playView();
     case "edit": return editView();
     default: return [el("div",{class:"panel"},[el("h2",{text:"Načítám kvízy…"})])];
@@ -162,7 +166,7 @@ function logout(){ sb.auth.signOut(); }
 /* ---------- seznam ---------- */
 function loadQuizzes(){
   return sb.from("quizzes")
-    .select("id,title,question_count,locked,updated_at,author_id,profiles(nickname)")
+    .select("id,title,question_count,locked,price,updated_at,author_id,profiles(nickname)")
     .order("updated_at",{ascending:false})
     .limit(500)
     .then(function(r){
@@ -176,22 +180,62 @@ function profileLink(id, name, cls){
   return el("a",{href:"#u/"+id, class:cls || "plink", text:name || "Neznámý"});
 }
 
+function isAdmin(){ return !!(S.profile && S.profile.is_admin); }
+function canOpen(q){ return !q.price || q.author_id === S.me || !!S.owned[q.id] || isAdmin(); }
+function kr(n){ return n+" "+plural(n,"kredit","kredity","kreditů"); }
+
 function quizCard(q, showAuthor){
   var mine = q.author_id === S.me, n = q.question_count || 0, author = (q.profiles && q.profiles.nickname) || "Neznámý";
-  var card = el("button",{class:"card",onclick:function(){ openQuiz(q.id, "play"); }},[
+  var open = canOpen(q), owned = !!S.owned[q.id];
+  var pills = [
+    mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null,
+    q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
+    owned && !mine ? el("span",{class:"pill mine",text:"Koupeno"}) : null,
+    q.locked ? el("span",{class:"pill",text:"Na heslo"}) : null
+  ];
+  var card = el("button",{class:"card",onclick:function(){ if (open) openQuiz(q.id, "play"); else { S.buyFor = q; go("buy"); } }},[
     el("span",{class:"txt"},[
       el("strong",{text:q.title||"Bez názvu"}),
       el("span",{class:"muted small",text:n+" "+plural(n,"otázka","otázky","otázek")+" · "+fmtDate(q.updated_at)}),
-      (mine || q.locked) ? el("span",{class:"row",style:"gap:6px"},[ mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null, q.locked ? el("span",{class:"pill",text:"Na heslo"}) : null ]) : null
+      el("span",{class:"row",style:"gap:6px"}, pills)
     ]),
-    el("span",{class:"go",text:"Hrát"})
+    el("span",{class:"go",text: open ? "Hrát" : "Koupit"})
   ]);
   var meta = el("div",{class:"cardmeta"},[
     showAuthor ? el("span",{class:"small muted"},["Autor: ", profileLink(q.author_id, author)]) : null,
     mine ? el("button",{class:"btn link small",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}) : null,
-    mine ? el("button",{class:"btn link small danger-link",text:"Smazat",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null
+    (mine || isAdmin()) ? el("button",{class:"btn link small danger-link",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null
   ]);
-  return el("div",{class:"cardwrap"},[card, (showAuthor || mine) ? meta : null]);
+  return el("div",{class:"cardwrap"},[card, (showAuthor || mine || isAdmin()) ? meta : null]);
+}
+
+/* ---------- nákup ---------- */
+function buyView(){
+  var q = S.buyFor, have = (S.profile && S.profile.credits) || 0, missing = q.price - have;
+  var btn = el("button",{class:"btn",text:"Koupit za "+kr(q.price),disabled: missing > 0,onclick:function(){
+    btn.disabled = true; btn.textContent = "Kupuju…";
+    sb.rpc("buy_quiz",{p_quiz:q.id}).then(function(r){
+      if (r.error){ btn.disabled = false; btn.textContent = "Koupit za "+kr(q.price); return err("err", dbErrText(r.error)); }
+      S.profile.credits = r.data; S.owned[q.id] = true; renderBar();
+      openQuiz(q.id, "play");
+    });
+  }});
+  return [
+    el("div",{class:"top"},[el("h1",{text:"Koupit materiál"}), el("button",{class:"btn link",text:"Zpět na seznam",onclick:function(){ nav("#kvizy"); }})]),
+    el("div",{class:"panel buy"},[
+      el("span",{class:"label",text:"Placený kvíz"}),
+      el("h2",{text:q.title}),
+      el("p",{class:"muted"},[ (q.question_count||0)+" "+plural(q.question_count||0,"otázka","otázky","otázek")+" · autor ", profileLink(q.author_id, (q.profiles && q.profiles.nickname) || "Neznámý") ]),
+      el("dl",{class:"stats two"},[
+        el("div",{},[el("dt",{text:"Cena"}), el("dd",{text:kr(q.price)})]),
+        el("div",{},[el("dt",{text:"Máš"}), el("dd",{text:kr(have)})])
+      ]),
+      missing > 0 ? el("p",{class:"msg err",text:"Chybí ti "+kr(missing)+". Kredity ti přidá správce."})
+                  : el("p",{class:"muted small",text:"Po nákupu ti zůstane "+kr(have - q.price)+". Kvíz pak můžeš hrát kdykoli znovu. Kredity dostane autor."}),
+      msgEl(),
+      el("div",{class:"row"},[btn])
+    ])
+  ];
 }
 
 function fmtDate(d){ try { return new Date(d).toLocaleDateString("cs-CZ",{day:"numeric",month:"numeric",year:"numeric"}); } catch(e) { return ""; } }
@@ -228,6 +272,7 @@ function renderBar(){
   bar.replaceChildren(el("div",{class:"barin"},[
     el("a",{href:"#kvizy",class:"brand"},[el("span",{class:"brandmark","aria-hidden":"true",text:"K"}), el("span",{},[el("strong",{text:"Kvízy"}), el("small",{text:"studijní materiály"})])]),
     el("nav",{class:"navlinks","aria-label":"Hlavní menu"},[
+      el("a",{href:"#u/"+S.me, class:"credits", title:"Tvoje kredity", text:kr((S.profile && S.profile.credits) || 0)}),
       link("#kvizy","Kvízy","home"),
       link("#lide","Lidé","people"),
       link("#u/"+S.me,"Můj profil","me"),
@@ -278,17 +323,51 @@ function peopleView(){
 
 /* ---------- profil ---------- */
 function openProfile(id){
-  var seq = ++peopleSeq;
+  var seq = ++peopleSeq, priv = id === S.me || isAdmin();
   S.prof = {id:id, loading:true};
+  var none = Promise.resolve({data:[]});
   Promise.all([
-    sb.from("profiles").select("id,nickname,created_at").eq("id", id).maybeSingle(),
-    sb.from("quizzes").select("id,title,question_count,locked,updated_at,author_id").eq("author_id", id).order("updated_at",{ascending:false})
+    sb.from("profiles").select("id,nickname,created_at,credits,is_admin").eq("id", id).maybeSingle(),
+    sb.from("quizzes").select("id,title,question_count,locked,price,updated_at,author_id,profiles(nickname)").eq("author_id", id).order("updated_at",{ascending:false}),
+    priv ? sb.from("purchases").select("created_at,quizzes(id,title,question_count,locked,price,updated_at,author_id,profiles(nickname))").eq("buyer_id", id).order("created_at",{ascending:false}) : none,
+    priv ? sb.from("credit_log").select("amount,reason,created_at").eq("user_id", id).order("created_at",{ascending:false}).limit(20) : none
   ]).then(function(r){
     if (seq !== peopleSeq) return;
-    var e = r[0].error || r[1].error;
-    S.prof = e ? {id:id, error:dbErrText(e)} : {id:id, p:r[0].data, quizzes:r[1].data || []};
+    var e = r[0].error || r[1].error || r[2].error || r[3].error;
+    S.prof = e ? {id:id, error:dbErrText(e)} : {id:id, p:r[0].data, quizzes:r[1].data || [],
+      bought:(r[2].data || []).map(function(x){ return x.quizzes; }).filter(Boolean), log:r[3].data || [], priv:priv};
+    if (id === S.me && r[0].data){ S.profile.credits = r[0].data.credits; S.profile.is_admin = r[0].data.is_admin; renderBar(); }
     if (S.view === "profile") render();
   });
+}
+
+function adminBox(P){
+  var amt = el("input",{type:"number",id:"adm-amount",step:"1",placeholder:"Např. 50",inputmode:"numeric"});
+  var note = el("input",{type:"text",id:"adm-note",maxlength:"80",placeholder:"Důvod (nepovinné), např. Odměna za aktivitu"});
+  function send(sign, b){
+    var n = Math.abs(parseInt(amt.value, 10));
+    if (!n){ err("err","Zadej počet kreditů.", "admin"); return focusLater("adm-amount"); }
+    b.disabled = true;
+    sb.rpc("admin_add_credits",{p_user:P.id, p_amount:sign*n, p_note:note.value}).then(function(r){
+      if (r.error){ b.disabled = false; return err("err", dbErrText(r.error), "admin"); }
+      P.p.credits = r.data;
+      if (P.id === S.me){ S.profile.credits = r.data; }
+      P.log.unshift({amount:sign*n, reason:note.value.trim() || "Kredity od správce", created_at:new Date().toISOString()});
+      err("ok", (sign > 0 ? "Přidáno " : "Odebráno ")+kr(n)+". "+P.p.nickname+" má teď "+kr(r.data)+".", "admin");
+    });
+  }
+  var add = el("button",{class:"btn",type:"submit",text:"Přidat kredity"});
+  var sub = el("button",{class:"btn ghost",type:"button",text:"Odebrat",onclick:function(e){ send(-1, e.currentTarget); }});
+  return el("form",{class:"panel adminbox",onsubmit:function(e){ e.preventDefault(); send(1, add); }},[
+    el("span",{class:"label",text:"Správce"}),
+    el("h2",{text:"Kredity pro "+P.p.nickname}),
+    el("div",{class:"grid2"},[
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-amount",text:"Počet kreditů"}), amt]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-note",text:"Důvod"}), note])
+    ]),
+    msgEl("admin"),
+    el("div",{class:"row"},[add, sub])
+  ]);
 }
 
 function profileView(){
@@ -297,27 +376,39 @@ function profileView(){
   if (P.error) return [el("p",{class:"msg err",text:P.error})];
   if (!P.p) return [el("div",{class:"panel"},[el("h2",{text:"Tenhle profil neexistuje"}), el("p",{},[el("a",{href:"#lide",class:"plink",text:"Zpět na lidi"})])])];
   var me = P.id === S.me, qs = P.quizzes, total = qs.reduce(function(a,q){ return a + (q.question_count||0); }, 0);
-  var locked = qs.filter(function(q){ return q.locked; }).length;
+  var stats = [
+    el("div",{},[el("dt",{text:"Kvízy"}), el("dd",{text:String(qs.length)})]),
+    el("div",{},[el("dt",{text:"Otázky celkem"}), el("dd",{text:String(total)})]),
+    P.priv ? el("div",{},[el("dt",{text:"Kredity"}), el("dd",{text:String(P.p.credits || 0)})])
+           : el("div",{},[el("dt",{text:"Placené"}), el("dd",{text:String(qs.filter(function(q){ return q.price > 0; }).length)})])
+  ];
   return [
     el("section",{class:"panel profile"},[
       el("div",{class:"profhead"},[
         el("span",{class:"avatar big","aria-hidden":"true",text:(P.p.nickname||"?").charAt(0).toUpperCase()}),
         el("div",{class:"txt"},[
-          el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"}),
+          el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"}), P.p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null]),
           el("h1",{text:P.p.nickname}),
           el("span",{class:"muted small",text:"Členem od "+fmtDate(P.p.created_at)})
         ])
       ]),
-      el("dl",{class:"stats"},[
-        el("div",{},[el("dt",{text:"Kvízy"}), el("dd",{text:String(qs.length)})]),
-        el("div",{},[el("dt",{text:"Otázky celkem"}), el("dd",{text:String(total)})]),
-        el("div",{},[el("dt",{text:"Na heslo"}), el("dd",{text:String(locked)})])
-      ])
+      el("dl",{class:"stats"}, stats)
     ]),
+    isAdmin() ? adminBox(P) : null,
     msgEl(),
     el("div",{class:"top"},[el("h2",{text: me ? "Moje materiály" : "Materiály"}), me ? el("button",{class:"btn",text:"Nový kvíz",onclick:function(){ openEditor(null, [], ""); }}) : null]),
     qs.length ? el("div",{class:"cards"}, qs.map(function(q){ return quizCard(q, false); }))
-      : el("p",{class:"muted",text: me ? "Zatím jsi nic nevytvořil. Dej Nový kvíz." : P.p.nickname+" zatím nic nevytvořil."})
+      : el("p",{class:"muted",text: me ? "Zatím jsi nic nevytvořil. Dej Nový kvíz." : P.p.nickname+" zatím nic nevytvořil."}),
+    P.priv ? el("h2",{text: me ? "Koupené materiály" : "Koupil(a)"}) : null,
+    P.priv ? (P.bought.length ? el("div",{class:"cards"}, P.bought.map(function(q){ return quizCard(q, true); }))
+                              : el("p",{class:"muted",text:"Zatím nic."})) : null,
+    P.priv ? el("h2",{text:"Historie kreditů"}) : null,
+    P.priv ? (P.log.length ? el("ul",{class:"history"}, P.log.map(function(x){
+        return el("li",{},[
+          el("span",{class:"txt"},[el("span",{text:x.reason}), el("span",{class:"muted small",text:fmtDate(x.created_at)})]),
+          el("strong",{class: x.amount > 0 ? "plus" : "minus", text:(x.amount > 0 ? "+" : "−")+Math.abs(x.amount)})
+        ]);
+      })) : el("p",{class:"muted",text:"Zatím žádné pohyby."})) : null
   ];
 }
 
@@ -337,9 +428,18 @@ function confirmDelete(btn, id){
 }
 
 function openQuiz(id, then){
-  sb.from("quizzes").select("id,title,questions,enc,author_id").eq("id", id).single().then(function(r){
-    if (r.error) return err("err", dbErrText(r.error));
-    var q = r.data;
+  Promise.all([
+    sb.from("quizzes").select("id,title,author_id,price,question_count,locked,updated_at,profiles(nickname)").eq("id", id).single(),
+    sb.from("quiz_content").select("questions,enc").eq("quiz_id", id).maybeSingle()
+  ]).then(function(r){
+    var e = r[0].error || r[1].error;
+    if (e) return err("err", dbErrText(e));
+    var q = r[0].data, c = r[1].data;
+    if (!c){
+      if (!canOpen(q)){ S.buyFor = q; go("buy"); return; }
+      return err("err","Otázky tohohle kvízu se nepovedlo načíst.");
+    }
+    q.questions = c.questions; q.enc = c.enc;
     if (q.enc){ S.lockFor = {quiz:q, then:then}; go("lock"); return; }
     if (then === "edit") openEditor(q, q.questions || [], ""); else startPlay(q, q.questions || []);
   });
@@ -409,7 +509,7 @@ function playView(){
 
 /* ---------- úpravy ---------- */
 function openEditor(q, questions, pw){
-  S.edit = { id: q ? q.id : null, title: q ? q.title : "", pw: pw,
+  S.edit = { id: q ? q.id : null, title: q ? q.title : "", pw: pw, price: q ? (q.price || 0) : 0,
              questions: questions.map(function(x){ return {q:x.q, a:x.a.slice(), correct:x.correct}; }) };
   go("edit");
 }
@@ -544,6 +644,8 @@ function editView(){
   title.value = D.title;
   var pw = el("input",{type:"password",id:"ed-pw",autocomplete:"new-password",placeholder:"Nech prázdné, když má být kvíz bez hesla",oninput:function(e){ D.pw = e.target.value; }});
   pw.value = D.pw;
+  var priceIn = el("input",{type:"number",id:"ed-price",min:"0",max:"10000",step:"1",inputmode:"numeric",oninput:function(e){ D.price = e.target.value; }});
+  priceIn.value = D.price;
 
   var list = D.questions.length ? el("ol",{class:"qlist"}, D.questions.map(function(q, i){
     return el("li",{},[
@@ -615,6 +717,8 @@ function editView(){
       el("div",{class:"field"},[el("label",{class:"label",for:"ed-title",text:"Název kvízu"}), title]),
       el("div",{class:"field"},[el("label",{class:"label",for:"ed-pw",text:"Heslo (nepovinné)"}), pw,
         el("p",{class:"muted small",text:"S heslem uvidí ostatní v seznamu jen název. Otázky se uloží zašifrované a odemkne je jen ten, kdo zná heslo."})]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"ed-price",text:"Cena v kreditech"}), priceIn,
+        el("p",{class:"muted small",text:"0 = zdarma. Když kvíz někdo koupí, kredity dostaneš ty."})]),
       el("span",{class:"label",text:"Otázky ("+D.questions.length+")"}),
       list
     ]),
@@ -629,15 +733,26 @@ function saveQuiz(btn){
   if (!D.title.trim()){ err("err","Dej kvízu název."); return focusLater("ed-title"); }
   if (!D.questions.length) return err("err","Přidej aspoň jednu otázku.");
   if (D.pw && D.pw.length < 4) return err("err","Heslo musí mít aspoň 4 znaky, nebo ho nech prázdné.");
+  var price = Number(D.price);
+  if (!Number.isInteger(price) || price < 0 || price > 10000){ err("err","Cena musí být celé číslo od 0 do 10 000."); return focusLater("ed-price"); }
   btn.disabled = true; btn.textContent = "Ukládám…";
-  var row = {title:D.title.trim(), question_count:D.questions.length, updated_at:new Date().toISOString()};
-  var ready = D.pw
-    ? encrypt(D.questions, D.pw).then(function(blob){ row.enc = blob; row.questions = null; return row; })
-    : Promise.resolve((row.questions = D.questions, row.enc = null, row));
-  ready.then(function(r){
-    return D.id ? sb.from("quizzes").update(r).eq("id", D.id) : sb.from("quizzes").insert(r);
-  }).then(function(res){
-    if (res.error) throw res.error;
+  var row = {title:D.title.trim(), question_count:D.questions.length, price:price, locked:!!D.pw, updated_at:new Date().toISOString()};
+  var content = D.pw ? encrypt(D.questions, D.pw).then(function(blob){ return {questions:null, enc:blob}; })
+                     : Promise.resolve({questions:D.questions, enc:null});
+  var created = false;
+  content.then(function(c){
+    var saveRow = D.id ? sb.from("quizzes").update(row).eq("id", D.id).then(function(r){ if (r.error) throw r.error; return D.id; })
+                       : sb.from("quizzes").insert(row).select("id").single().then(function(r){ if (r.error) throw r.error; created = true; return r.data.id; });
+    return saveRow.then(function(id){
+      c.quiz_id = id;
+      return sb.from("quiz_content").upsert(c, {onConflict:"quiz_id"}).then(function(r){
+        if (r.error){
+          if (created) sb.from("quizzes").delete().eq("id", id);
+          throw r.error;
+        }
+      });
+    });
+  }).then(function(){
     S.msg = {kind:"ok", text:"Kvíz „"+D.title.trim()+"“ je uložený a ostatní ho uvidí v seznamu."};
     nav("#kvizy", true);
   }).catch(function(e){
@@ -647,13 +762,24 @@ function saveQuiz(btn){
 }
 
 /* ---------- start ---------- */
+function refreshMe(){
+  return sb.from("profiles").select("nickname,credits,is_admin").eq("id", S.me).maybeSingle().then(function(r){
+    if (r.data) S.profile = r.data;
+    renderBar();
+  });
+}
+function loadOwned(){
+  return sb.from("purchases").select("quiz_id").eq("buyer_id", S.me).then(function(r){
+    var o = {}; (r.data || []).forEach(function(p){ o[p.quiz_id] = true; }); S.owned = o;
+  });
+}
 function onSession(session){
   S.session = session;
-  if (!session){ S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; if (S.view !== "auth") go("auth", true); return; }
+  if (!session){ S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; S.owned = {}; if (S.view !== "auth") go("auth", true); return; }
   if (S.me === session.user.id && S.view !== "loading" && S.view !== "auth") return;
   S.me = session.user.id;
-  sb.from("profiles").select("nickname").eq("id", S.me).maybeSingle().then(function(r){
-    S.profile = r.data || {nickname: (session.user.user_metadata && session.user.user_metadata.nickname) || ""};
+  Promise.all([refreshMe(), loadOwned()]).then(function(){
+    if (!S.profile) S.profile = {nickname: (session.user.user_metadata && session.user.user_metadata.nickname) || "", credits:0, is_admin:false};
     S.msg = null; route();
   });
 }
