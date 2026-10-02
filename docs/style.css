@@ -421,3 +421,44 @@ input:focus-visible,textarea:focus-visible,select:focus-visible{outline:none}
   .themebtn{font-size:.78rem;padding:3px 8px}
   h1{font-size:1.8rem}
 }
+
+/* ---------- přihlášení: celá obrazovka, ukázkové karty ---------- */
+body.authpage{background:
+  radial-gradient(900px 500px at 15% 10%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 60%),
+  radial-gradient(800px 500px at 90% 90%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%),
+  var(--bg)}
+#app.wide{max-width:1080px;min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding-block:32px}
+.authwrap{min-height:580px}
+.authhero{padding:48px 44px;gap:24px}
+.authhero h2{line-height:1.16;letter-spacing:-.025em;font-size:2.5rem}
+.authform{padding:48px 44px;gap:18px}
+.authform h1{line-height:1.15}
+.herodeco{opacity:.6}
+.herocards{position:relative;height:196px;margin-top:4px}
+.hcard{position:absolute;display:flex;align-items:center;gap:10px;padding:10px 14px 10px 10px;border-radius:14px;
+  background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  box-shadow:0 10px 30px rgba(0,0,0,.18);color:#fff;white-space:nowrap}
+.hcard strong{display:block;font-family:var(--display);font-weight:600;font-size:.95rem}
+.hcard small{display:block;font-size:.78rem;color:#d8eec4}
+.hico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:#9fd06b;color:#163409;flex:none}
+.hcard.one{left:0;top:0;transform:rotate(-3deg)}
+.hcard.two{right:4%;top:66px;transform:rotate(2.5deg)}
+.hcard.three{left:6%;top:134px;transform:rotate(-1.5deg)}
+@media (prefers-reduced-motion: no-preference){
+  .hcard{animation:floaty 7s ease-in-out infinite}
+  .hcard.two{animation-delay:-2.3s} .hcard.three{animation-delay:-4.6s}
+  @keyframes floaty{0%,100%{translate:0 0}50%{translate:0 -6px}}
+}
+.pwwrap{position:relative}
+.pwwrap input{padding-right:92px}
+.pwtoggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);font:inherit;font-size:.85rem;font-weight:700;color:var(--accent-strong);background:var(--accent-soft);border:0;border-radius:999px;padding:5px 11px;cursor:pointer}
+.pwtoggle:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.switch{text-align:center;font-size:.95rem}
+.switch .btn.link{font-size:.95rem}
+@media (max-width:760px){
+  #app.wide{justify-content:flex-start;padding-block:16px}
+  .authwrap{min-height:0}
+  .authhero{padding:30px 24px} .authform{padding:28px 22px}
+  .authhero h2{font-size:1.9rem}
+  .herocards{display:none}
+}

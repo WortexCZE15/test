@@ -53,6 +53,7 @@ function msgEl(where){ return S.msg && (S.msg.where || null) === (where || null)
 function render(){
   var a = document.activeElement, id = a && a.id && a.tagName === "INPUT" ? a.id : null, sel = id ? [a.selectionStart, a.selectionEnd] : null;
   app.className = S.view === "auth" ? "wide" : "";
+  document.body.classList.toggle("authpage", S.view === "auth");
   app.replaceChildren.apply(app, view().filter(Boolean));
   renderBar();
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
@@ -170,7 +171,10 @@ function authView(){
   var reg = S.authTab === "register";
   var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true,placeholder:"jmeno@studenti.czu.cz"});
   var nick = reg ? el("input",{type:"text",id:"au-nick",maxlength:"30",autocomplete:"nickname",placeholder:"Jak ti mají ostatní říkat"}) : null;
-  var pw = el("input",{type:"password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true});
+  var pw = el("input",{type: S.showPw ? "text" : "password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true});
+  var pwToggle = el("button",{type:"button",class:"pwtoggle","aria-label": S.showPw ? "Skrýt heslo" : "Zobrazit heslo","aria-pressed":String(!!S.showPw),text: S.showPw ? "Skrýt" : "Zobrazit",onclick:function(){
+    S.showPw = !S.showPw; var v = pw.value; render(); var n = document.getElementById("au-pw"); if (n){ n.value = v; n.focus(); }
+  }});
   var btn = el("button",{class:"btn block",type:"submit",text: S.busy ? "Chvilku…" : reg ? "Vytvořit účet" : "Přihlásit se",disabled:S.busy});
 
   var form = el("form",{class:"authform",onsubmit:function(e){ e.preventDefault(); reg ? doRegister(email.value, nick.value, pw.value) : doLogin(email.value, pw.value); }},[
@@ -182,9 +186,11 @@ function authView(){
       el("p",{class:"muted",text: reg ? "Zabere to minutu. Pak můžeš hned procházet a přidávat." : "Přihlas se a pokračuj tam, kde jsi skončil."})]),
     el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text:"E-mail"}), email]),
     reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Uvidí ji ostatní u tvých kvízů, materiálů a recenzí."})]) : null,
-    el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), pw, reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
+    el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), el("div",{class:"pwwrap"},[pw, pwToggle]), reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
     msgEl(),
-    btn
+    btn,
+    el("p",{class:"switch muted"},[ reg ? "Už máš účet? " : "Nemáš účet? ",
+      el("button",{type:"button",class:"btn link",text: reg ? "Přihlas se" : "Zaregistruj se",onclick:function(){ S.authTab = reg ? "login" : "register"; S.msg = null; render(); }}) ])
   ]);
 
   function feat(t, d){ return el("li",{},[el("span",{class:"tick","aria-hidden":"true",text:"✓"}), el("span",{},[el("strong",{text:t}), " "+d])]); }
@@ -196,6 +202,11 @@ function authView(){
       feat("Materiály", "výpisky, skripta a odkazy od spolužáků."),
       feat("Recenze učitelů", "ať víš, do čeho jdeš."),
       feat("Kredity", "za to, co nasdílíš.")
+    ]),
+    el("div",{class:"herocards","aria-hidden":"true"},[
+      el("div",{class:"hcard one"},[el("span",{class:"hico"},[icon("quiz",18)]), el("span",{},[el("strong",{text:"Botanika – pletiva"}), el("small",{text:"★★★★★ 4,8 · 32 otázek"})])]),
+      el("div",{class:"hcard two"},[el("span",{class:"hico"},[icon("teacher",18)]), el("span",{},[el("strong",{text:"Recenze učitelů"}), el("small",{text:"★★★★☆ · férové zkoušky"})])]),
+      el("div",{class:"hcard three"},[el("span",{class:"hico"},[icon("file",18)]), el("span",{},[el("strong",{text:"Výpisky z genetiky"}), el("small",{text:"PDF · 2,4 MB"})])])
     ]),
     el("p",{class:"heronote",text:"Neoficiální studentský web. Není provozovaný ani schválený Českou zemědělskou univerzitou."}),
     svgEl("svg",{viewBox:"0 0 40 40",class:"herodeco","aria-hidden":"true"},[
