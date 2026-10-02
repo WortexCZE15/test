@@ -1,0 +1,37 @@
+{
+  "process": "ACU.exe",
+  "cheats": [
+    {
+      "name": "Nekonecne penize",
+      "hotkey": "f1",
+      "type": "int",
+      "value": 9999999,
+      "base": "",
+      "offsets": []
+    },
+    {
+      "name": "Nekonecne zdravi",
+      "hotkey": "f2",
+      "type": "int",
+      "value": 100,
+      "base": "",
+      "offsets": []
+    },
+    {
+      "name": "Nekonecne naboje",
+      "hotkey": "f3",
+      "type": "int",
+      "value": 99,
+      "base": "",
+      "offsets": []
+    },
+    {
+      "name": "Nekonecne kourove bomby",
+      "hotkey": "f4",
+      "type": "int",
+      "value": 99,
+      "base": "",
+      "offsets": []
+    }
+  ]
+}
