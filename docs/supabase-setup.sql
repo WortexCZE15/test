@@ -841,6 +841,90 @@ end;
 $$;
 
 -- =========================================================
+-- Moderátoři a ověřené materiály
+-- =========================================================
+alter table public.profiles add column if not exists is_moderator boolean not null default false;
+alter table public.materials add column if not exists verified_by uuid references public.profiles (id) on delete set null;
+alter table public.materials add column if not exists verified_at timestamptz;
+
+create or replace function public.is_moderator()
+returns boolean
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select coalesce((select is_moderator or is_admin from public.profiles where id = auth.uid()), false);
+$$;
+
+-- Moderátor (nebo správce) označí materiál jako ověřený, nebo ověření zruší.
+create or replace function public.set_material_verified(p_material uuid, p_verified boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_moderator() then
+    raise exception 'Ověřovat materiály může jen moderátor.';
+  end if;
+  update public.materials set
+    verified_by = case when p_verified then auth.uid() end,
+    verified_at = case when p_verified then now() end
+  where id = p_material;
+  if not found then
+    raise exception 'Materiál neexistuje.';
+  end if;
+end;
+$$;
+
+-- Správce jmenuje nebo odvolá moderátora.
+create or replace function public.admin_set_moderator(p_user uuid, p_value boolean)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Moderátory může jmenovat jen správce.';
+  end if;
+  update public.profiles set is_moderator = p_value where id = p_user;
+  if not found then
+    raise exception 'Uživatel neexistuje.';
+  end if;
+end;
+$$;
+
+-- Když autor změní obsah ověřeného materiálu, ověření se zruší.
+create or replace function public.reset_material_verification()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_table_name = 'material_content' then
+    update public.materials set verified_by = null, verified_at = null
+      where id = new.material_id and verified_at is not null;
+    return null;
+  end if;
+  if (new.title, new.description, new.kind, new.file_name, new.file_size)
+     is distinct from (old.title, old.description, old.kind, old.file_name, old.file_size) then
+    new.verified_by := null;
+    new.verified_at := null;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists materials_reset_verified on public.materials;
+create trigger materials_reset_verified before update on public.materials
+  for each row execute function public.reset_material_verification();
+drop trigger if exists material_content_reset_verified on public.material_content;
+create trigger material_content_reset_verified after insert or update on public.material_content
+  for each row execute function public.reset_material_verification();
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
@@ -907,3 +991,11 @@ grant execute on function public.get_teacher_reviews(uuid) to authenticated;
 revoke all on function public.unlock_review(uuid, uuid) from public;
 revoke execute on function public.unlock_review(uuid, uuid) from anon;
 grant execute on function public.unlock_review(uuid, uuid) to authenticated;
+revoke all on function public.is_moderator() from public;
+grant execute on function public.is_moderator() to authenticated;
+revoke all on function public.set_material_verified(uuid, boolean) from public;
+revoke execute on function public.set_material_verified(uuid, boolean) from anon;
+grant execute on function public.set_material_verified(uuid, boolean) to authenticated;
+revoke all on function public.admin_set_moderator(uuid, boolean) from public;
+revoke execute on function public.admin_set_moderator(uuid, boolean) from anon;
+grant execute on function public.admin_set_moderator(uuid, boolean) to authenticated;

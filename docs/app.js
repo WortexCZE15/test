@@ -236,6 +236,9 @@ var LETTERS = "ABCDEF";
 var MIN_A = 2, MAX_A = 6;
 
 function isAdmin(){ return !!(S.profile && S.profile.is_admin); }
+function isMod(){ return !!(S.profile && (S.profile.is_moderator || S.profile.is_admin)); }
+function roleBadges(p){ return [p && p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null, p && p.is_moderator ? el("span",{class:"pill mod",text:"Moderátor"}) : null]; }
+function verifiedPill(){ return el("span",{class:"pill verified",text:"✓ Ověřeno moderátorem"}); }
 function canOpen(q){ return !q.price || q.author_id === S.me || !!S.owned[q.id] || isAdmin(); }
 function kr(n){ return n+" "+plural(n,"kredit","kredity","kreditů"); }
 function fmtDate(d){ try { return new Date(d).toLocaleDateString("cs-CZ",{day:"numeric",month:"numeric",year:"numeric"}); } catch(e) { return ""; } }
@@ -270,7 +273,7 @@ function loadQuizzes(){
   });
 }
 function refreshMe(){
-  return sb.from("profiles").select("nickname,credits,is_admin,avatar_v,bio").eq("id", S.me).maybeSingle().then(function(r){
+  return sb.from("profiles").select("nickname,credits,is_admin,is_moderator,avatar_v,bio").eq("id", S.me).maybeSingle().then(function(r){
     if (r.data) S.profile = r.data;
     if (isAdmin()) sb.from("reports").select("id",{count:"exact",head:true}).eq("status","open").then(function(c){ S.openReports = c.count || 0; renderBar(); });
     renderBar();
@@ -625,7 +628,7 @@ function buyView(){
 var peopleTimer = null, peopleSeq = 0;
 function loadPeople(){
   var q = S.peopleQ.trim(), seq = ++peopleSeq;
-  var req = sb.from("profiles").select("id,nickname,created_at,avatar_v,bio").order("nickname").limit(50);
+  var req = sb.from("profiles").select("id,nickname,created_at,avatar_v,bio,is_admin,is_moderator").order("nickname").limit(50);
   if (q) req = req.ilike("nickname", "%" + q.replace(/[\\%_]/g, "\\$&") + "%");
   req.then(function(r){
     if (seq !== peopleSeq) return;
@@ -651,7 +654,7 @@ function peopleView(){
     return el("a",{href:"#u/"+p.id, class:"person"},[
       avatarEl(p.id, p),
       el("span",{class:"txt"},[
-        el("strong",{text:p.nickname + (p.id === S.me ? " (ty)" : "")}),
+        el("span",{class:"row",style:"gap:6px"},[el("strong",{text:p.nickname + (p.id === S.me ? " (ty)" : "")})].concat(roleBadges(p))),
         el("span",{class:"muted small",text:n+" "+plural(n,"kvíz","kvízy","kvízů")+" · od "+fmtDate(p.created_at)+(S.following[p.id] ? " · sleduješ" : "")}),
         p.bio ? el("span",{class:"small bio1",text:p.bio}) : null
       ]),
@@ -671,7 +674,7 @@ function openProfile(id){
   S.prof = {id:id, loading:true};
   var none = Promise.resolve({data:[]});
   Promise.all([
-    sb.from("profiles").select("id,nickname,created_at,credits,is_admin,avatar_v,bio").eq("id", id).maybeSingle(),
+    sb.from("profiles").select("id,nickname,created_at,credits,is_admin,is_moderator,avatar_v,bio").eq("id", id).maybeSingle(),
     sb.from("quizzes").select(QUIZ_COLS).eq("author_id", id).order("updated_at",{ascending:false}),
     priv ? sb.from("purchases").select("created_at,quizzes("+QUIZ_COLS+")").eq("buyer_id", id).order("created_at",{ascending:false}) : none,
     priv ? sb.from("credit_log").select("amount,reason,created_at").eq("user_id", id).order("created_at",{ascending:false}).limit(20) : none,
@@ -807,7 +810,18 @@ function adminBox(P){
       el("div",{class:"field"},[el("label",{class:"label",for:"adm-note",text:"Důvod"}), note])
     ]),
     msgEl("admin"),
-    el("div",{class:"row"},[add, sub])
+    el("div",{class:"row"},[add, sub]),
+    el("div",{class:"modrow"},[
+      el("span",{class:"small"},[ P.p.is_moderator ? P.p.nickname+" je moderátor a může ověřovat materiály." : P.p.nickname+" není moderátor." ]),
+      el("button",{class:"btn sm "+(P.p.is_moderator ? "ghost" : "info"),type:"button",text: P.p.is_moderator ? "Odebrat moderátora" : "Jmenovat moderátorem",onclick:function(e){
+        var b = e.currentTarget, val = !P.p.is_moderator; b.disabled = true;
+        sb.rpc("admin_set_moderator",{p_user:P.id, p_value:val}).then(function(r){
+          if (r.error){ b.disabled = false; return err("err", dbErrText(r.error), "admin"); }
+          P.p.is_moderator = val; if (P.id === S.me) S.profile.is_moderator = val;
+          err("ok", val ? P.p.nickname+" je teď moderátor." : P.p.nickname+" už není moderátor.", "admin");
+        });
+      }})
+    ])
   ]);
 }
 
@@ -861,7 +875,7 @@ function profileView(){
       el("div",{class:"profhead"},[
         avatarEl(P.id, P.p, "big"),
         el("div",{class:"txt"},[
-          el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"}), P.p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null]),
+          el("span",{class:"row",style:"gap:8px"},[el("span",{class:"label",text: me ? "Tvůj profil" : "Profil"})].concat(roleBadges(P.p))),
           P.renaming ? renameForm(P) : el("h1",{text:P.p.nickname}),
           el("span",{class:"muted small"},["Členem od "+fmtDate(P.p.created_at),
             me && !P.renaming ? el("button",{class:"btn link small",style:"margin-left:12px",text:"Změnit přezdívku",onclick:function(){ P.renaming = true; S.msg = null; render(); focusLater("rename"); }}) : null]),
@@ -912,7 +926,7 @@ function openAdmin(){
   Promise.all([
     cnt("profiles"), cnt("quizzes"), cnt("purchases"), cnt("plays"),
     sb.from("reports").select("id,reason,created_at,quiz_id,material_id,review_teacher_id,review_user_id,reporter_id,quizzes(title,author_id),materials(title),profiles!reports_reporter_id_fkey(nickname)").eq("status","open").order("created_at",{ascending:false}).limit(200),
-    sb.from("profiles").select("id,nickname,credits,is_admin,created_at,avatar_v").order("credits",{ascending:false}).limit(1000),
+    sb.from("profiles").select("id,nickname,credits,is_admin,is_moderator,created_at,avatar_v").order("credits",{ascending:false}).limit(1000),
     cnt("materials"), cnt("teachers"), cnt("teacher_reviews"),
     sb.from("teachers").select("id,name").limit(1000)
   ]).then(function(r){
@@ -996,7 +1010,7 @@ function adminView(){
       el("thead",{},[el("tr",{},[el("th",{text:"Přezdívka"}), el("th",{class:"num",text:"Kredity"}), el("th",{text:"Registrace"})])]),
       el("tbody",{}, people.map(function(p){
         return el("tr",{},[
-          el("td",{},[el("span",{class:"by"},[avatarEl(p.id, p, "xs"), profileLink(p.id, p.nickname), p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null])]),
+          el("td",{},[el("span",{class:"by"},[avatarEl(p.id, p, "xs"), profileLink(p.id, p.nickname)].concat(roleBadges(p)))]),
           el("td",{class:"num",text:String(p.credits||0)}),
           el("td",{text:fmtDate(p.created_at)})
         ]);
@@ -1406,7 +1420,7 @@ function saveQuiz(btn){
 /* =========================================================
    Procházení: záložky Kvízy / Materiály / Učitelé
    ========================================================= */
-var MAT_COLS = "id,title,subject,tags,description,kind,file_name,file_size,price,download_count,updated_at,author_id,profiles!materials_author_id_fkey(nickname,avatar_v)";
+var MAT_COLS = "id,title,subject,tags,description,kind,file_name,file_size,price,download_count,updated_at,verified_at,verified_by,author_id,profiles!materials_author_id_fkey(nickname,avatar_v)";
 var KIND_LABEL = {file:"Soubor", link:"Odkaz", text:"Text"};
 
 function browseTabs(){
@@ -1440,6 +1454,7 @@ function materialCard(m, showAuthor){
     el("span",{class:"cardicon"},[icon(m.kind === "link" ? "link" : m.kind === "text" ? "text" : "file")]),
     el("span",{class:"txt"},[
       el("span",{class:"row",style:"gap:6px"},[
+        m.verified_at ? verifiedPill() : null,
         m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
         el("span",{class:"pill kind",text:KIND_LABEL[m.kind] || "Materiál"}),
         m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
@@ -1465,6 +1480,7 @@ function materialsBrowse(){
   var shown = rows.filter(function(m){
     if (S.mSubject && m.subject !== S.mSubject) return false;
     if (S.mKind && m.kind !== S.mKind) return false;
+    if (S.mVerified && !m.verified_at) return false;
     if (!f) return true;
     return m.title.toLowerCase().indexOf(f) >= 0 || authorOf(m).toLowerCase().indexOf(f) >= 0 || (m.subject||"").toLowerCase().indexOf(f) >= 0
       || (m.description||"").toLowerCase().indexOf(f) >= 0 || (m.tags||[]).some(function(t){ return t.indexOf(f) >= 0; });
@@ -1494,6 +1510,7 @@ function materialsBrowse(){
     browseTabs(),
     msgEl(),
     el("div",{class:"filters four"},[search, subj, kind, sort]),
+    el("label",{class:"check"},[(function(){ var c = el("input",{type:"checkbox",id:"m-verified",onchange:function(e){ S.mVerified = e.target.checked; render(); }}); c.checked = !!S.mVerified; return c; })(), " Jen ověřené moderátorem"]),
     body
   ];
 }
@@ -1551,7 +1568,11 @@ function openMaterial(id){
   ]).then(function(r){
     if (seq !== matSeq) return;
     var e = r[0].error || r[1].error;
-    S.mat = e ? {id:id, error:dbErrText(e)} : {id:id, m:r[0].data, c:r[1].data, showText:false, reporting:false};
+    S.mat = e ? {id:id, error:dbErrText(e)} : {id:id, m:r[0].data, c:r[1].data, showText:false, reporting:false, verifier:null};
+    var vb = !e && r[0].data && r[0].data.verified_by;
+    if (vb) sb.from("profiles").select("id,nickname,is_admin,is_moderator").eq("id", vb).maybeSingle().then(function(x){
+      if (seq === matSeq && S.mat){ S.mat.verifier = x.data; if (S.view === "mdetail") render(); }
+    });
     if (S.view === "mdetail") render();
   });
 }
@@ -1580,6 +1601,7 @@ function materialDetailView(){
                      : el("button",{class:"btn",text:"Koupit za "+kr(m.price),onclick:function(){ S.buyFor = {type:"material", item:m}; go("buy"); }});
   var head = el("section",{class:"panel detail"},[
     el("span",{class:"row",style:"gap:6px"},[
+      m.verified_at ? verifiedPill() : null,
       m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
       el("span",{class:"pill kind",text:KIND_LABEL[m.kind]}),
       m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
@@ -1588,14 +1610,28 @@ function materialDetailView(){
     el("h1",{text:m.title}),
     el("span",{class:"by muted"},[avatarEl(m.author_id, m.profiles, "sm"), "Autor: ", profileLink(m.author_id, authorOf(m)), " · "+fmtDate(m.updated_at)]),
     (m.tags && m.tags.length) ? el("span",{class:"tags"}, m.tags.map(function(t){ return el("button",{class:"tag",type:"button",text:"#"+t,onclick:function(){ S.mFilter = "#"+t; nav("#materialy"); }}); })) : null,
+    m.verified_at ? el("div",{class:"verifiedbox"},[
+      el("span",{class:"pill mod",text:"Moderátor"}),
+      el("span",{},[ M.verifier ? "Materiál zkontroloval(a) " : "Materiál zkontroloval moderátor", M.verifier ? profileLink(M.verifier.id, M.verifier.nickname) : null, " · "+fmtDate(m.verified_at) ])
+    ]) : null,
     m.description ? el("p",{class:"desc",text:m.description}) : null,
     el("p",{class:"muted small",text:(m.kind === "file" && m.file_name ? "Soubor "+m.file_name+(m.file_size ? " ("+fmtSize(m.file_size)+")" : "")+" · " : "")+"otevřeno "+(m.download_count||0)+"×"}),
     msgEl(),
     el("div",{class:"row"},[
       openBtn,
       mine ? el("a",{class:"btn ghost",href:"#m/"+m.id+"/upravit",text:"Upravit"}) : null,
-      (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDeleteMaterial(e.currentTarget, m, M.c); }}) : null
-    ])
+      (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDeleteMaterial(e.currentTarget, m, M.c); }}) : null,
+      isMod() ? el("button",{class:"btn "+(m.verified_at ? "ghost" : "info"),text: m.verified_at ? "Zrušit ověření" : "✓ Ověřit materiál",onclick:function(e){
+        var b = e.currentTarget, val = !m.verified_at; b.disabled = true;
+        sb.rpc("set_material_verified",{p_material:m.id, p_verified:val}).then(function(r){
+          if (r.error){ b.disabled = false; return err("err", dbErrText(r.error)); }
+          if (S.materials && S.materials.rows) S.materials = null;
+          S.msg = {kind:"ok", text: val ? "Materiál je označený jako ověřený." : "Ověření zrušeno."};
+          openMaterial(m.id); render();
+        });
+      }}) : null
+    ]),
+    mine && m.verified_at ? el("p",{class:"muted small",text:"Když materiál upravíš, ověření se zruší a moderátor ho bude muset zkontrolovat znovu."}) : null
   ]);
   var text = M.showText && M.c ? el("section",{class:"panel"},[el("h2",{text:"Text materiálu"}), el("div",{class:"mattext",text:M.c.body || ""})]) : null;
   return [

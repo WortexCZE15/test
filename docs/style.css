@@ -473,3 +473,18 @@ body.authpage{background:var(--bg)}
 .authform.panel{padding:28px;gap:16px}
 .authnote{text-align:center;font-size:.8rem;color:var(--muted)}
 @media (max-width:760px){#app.wide{justify-content:center;padding-block:24px} .authtitle{font-size:2rem}}
+
+/* ---------- moderátor a ověřené materiály (modrá) ---------- */
+:root{--info:#1f62c7;--info-strong:#164c9e;--info-soft:#e7f0fd}
+:root[data-theme="dark"]{--info:#6fa8ff;--info-strong:#9cc3ff;--info-soft:#14243d}
+.pill.verified{background:var(--info);color:#fff}
+.pill.mod{background:var(--info-soft);color:var(--info-strong);border:1px solid color-mix(in srgb, var(--info) 30%, transparent)}
+.btn.info{background:var(--info);border-color:var(--info);color:#fff}
+.btn.info:hover:not(:disabled){background:var(--info-strong);border-color:var(--info-strong);box-shadow:0 6px 16px color-mix(in srgb, var(--info) 30%, transparent)}
+.verifiedbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--info-soft);color:var(--ink);border:1px solid color-mix(in srgb, var(--info) 25%, transparent);border-radius:12px;padding:10px 14px;font-size:.95rem}
+.verifiedbox .plink{color:var(--info-strong)}
+.modrow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding-top:12px;border-top:1px dashed color-mix(in srgb, var(--accent) 35%, transparent)}
+.check{display:inline-flex;align-items:center;gap:8px;font-size:.95rem;color:var(--muted);cursor:pointer;align-self:flex-start}
+.check input{width:18px;height:18px;accent-color:var(--info)}
+.btn.ghost.danger-btn{color:var(--bad);border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
+.btn.ghost.danger-btn:hover:not(:disabled){background:var(--bad-soft);border-color:var(--bad)}
