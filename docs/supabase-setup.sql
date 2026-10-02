@@ -756,16 +756,105 @@ end;
 $$;
 
 -- =========================================================
+-- Placené recenze učitelů: text recenze se odemyká za 1 kredit
+-- (autor recenze kredit dostane). Hvězdičky a předmět vidí všichni.
+-- =========================================================
+create table if not exists public.review_unlocks (
+  buyer_id uuid not null references public.profiles (id) on delete cascade,
+  teacher_id uuid not null,
+  reviewer_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (buyer_id, teacher_id, reviewer_id),
+  foreign key (teacher_id, reviewer_id) references public.teacher_reviews (teacher_id, user_id) on delete cascade
+);
+alter table public.review_unlocks enable row level security;
+drop policy if exists "review_unlocks: vlastni" on public.review_unlocks;
+create policy "review_unlocks: vlastni" on public.review_unlocks for select to authenticated using (buyer_id = auth.uid() or public.is_admin());
+
+-- Recenze učitele: text jen pro odemčené, vlastní nebo pro správce; jinak jen jeho délka.
+create or replace function public.get_teacher_reviews(p_teacher uuid)
+returns table (user_id uuid, nickname text, avatar_v bigint, stars int, subject text,
+               comment text, comment_len int, unlocked boolean, updated_at timestamptz)
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select r.user_id, p.nickname, p.avatar_v, r.stars, r.subject,
+         case when x.ok then r.comment end, char_length(r.comment), x.ok, r.updated_at
+  from public.teacher_reviews r
+  join public.profiles p on p.id = r.user_id
+  cross join lateral (
+    select (r.user_id = auth.uid() or public.is_admin()
+            or exists (select 1 from public.review_unlocks u
+                       where u.buyer_id = auth.uid() and u.teacher_id = r.teacher_id and u.reviewer_id = r.user_id)) as ok
+  ) x
+  where r.teacher_id = p_teacher and auth.uid() is not null
+  order by r.updated_at desc;
+$$;
+
+create or replace function public.unlock_review(p_teacher uuid, p_reviewer uuid)
+returns int
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_name text;
+  v_balance int;
+  v_new int;
+begin
+  if auth.uid() is null then
+    raise exception 'Nejsi přihlášený.';
+  end if;
+  if not exists (select 1 from public.teacher_reviews where teacher_id = p_teacher and user_id = p_reviewer) then
+    raise exception 'Recenze neexistuje.';
+  end if;
+  if p_reviewer = auth.uid() or public.is_admin() then
+    select credits into v_balance from public.profiles where id = auth.uid();
+    return v_balance;
+  end if;
+
+  insert into public.review_unlocks (buyer_id, teacher_id, reviewer_id)
+    values (auth.uid(), p_teacher, p_reviewer)
+    on conflict do nothing;
+  get diagnostics v_new = row_count;
+  if v_new = 0 then
+    select credits into v_balance from public.profiles where id = auth.uid();
+    return v_balance;
+  end if;
+
+  update public.profiles set credits = credits - 1
+    where id = auth.uid() and credits >= 1
+    returning credits into v_balance;
+  if not found then
+    raise exception 'NEDOSTATEK_KREDITU';
+  end if;
+  update public.profiles set credits = credits + 1 where id = p_reviewer;
+
+  select name into v_name from public.teachers where id = p_teacher;
+  insert into public.credit_log (user_id, amount, reason, by_id) values
+    (auth.uid(), -1, 'Odemčení recenze: ' || coalesce(v_name, 'učitel'), auth.uid()),
+    (p_reviewer, 1, 'Někdo odemkl tvou recenzi: ' || coalesce(v_name, 'učitel'), auth.uid());
+  return v_balance;
+end;
+$$;
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
   public.ratings, public.plays, public.follows, public.reports,
-  public.teachers, public.teacher_reviews, public.materials, public.material_content, public.material_purchases from anon, authenticated;
+  public.teachers, public.teacher_reviews, public.materials, public.material_content, public.material_purchases,
+  public.review_unlocks from anon, authenticated;
 grant select on public.teachers to authenticated;
 grant insert (name, department) on public.teachers to authenticated;
 grant update (name, department) on public.teachers to authenticated;
 grant delete on public.teachers to authenticated;
-grant select, insert, delete on public.teacher_reviews to authenticated;
+-- Text recenze (comment) se nedá číst přímo, jen přes get_teacher_reviews().
+grant select (teacher_id, user_id, stars, subject, created_at, updated_at) on public.teacher_reviews to authenticated;
+grant insert, delete on public.teacher_reviews to authenticated;
+grant select on public.review_unlocks to authenticated;
 grant update (stars, subject, comment, updated_at) on public.teacher_reviews to authenticated;
 grant select, delete on public.materials to authenticated;
 grant insert (title, subject, tags, description, kind, file_name, file_size, price, updated_at) on public.materials to authenticated;
@@ -812,3 +901,9 @@ revoke all on function public.can_open_material_path(text) from public;
 grant execute on function public.can_open_material_path(text) to authenticated;
 revoke all on function public.owns_material_path(text) from public;
 grant execute on function public.owns_material_path(text) to authenticated;
+revoke all on function public.get_teacher_reviews(uuid) from public;
+revoke execute on function public.get_teacher_reviews(uuid) from anon;
+grant execute on function public.get_teacher_reviews(uuid) to authenticated;
+revoke all on function public.unlock_review(uuid, uuid) from public;
+revoke execute on function public.unlock_review(uuid, uuid) from anon;
+grant execute on function public.unlock_review(uuid, uuid) to authenticated;

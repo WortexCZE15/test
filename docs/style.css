@@ -269,3 +269,11 @@ select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .distrow{display:grid;grid-template-columns:2.2em 1fr 2em;gap:8px;align-items:center;font-size:.9rem}
 .distbar{height:8px;background:var(--line);border-radius:99px;overflow:hidden}
 .distbar i{display:block;height:100%;background:var(--warn)}
+
+/* ---------- zamčené recenze ---------- */
+.locked{position:relative;border-radius:8px;overflow:hidden;min-height:96px;background:var(--soft)}
+.blurred{filter:blur(5px);user-select:none;pointer-events:none;color:var(--ink);opacity:.75;margin:0;padding:10px 12px}
+.lockover{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;background:color-mix(in srgb, var(--soft) 45%, transparent);padding:10px}
+.lockover .small{font-weight:700;color:var(--muted)}
+.unlockbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--warn-soft);border-radius:8px;padding:10px 14px}
+.unlockbar p{max-width:60ch}

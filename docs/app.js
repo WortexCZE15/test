@@ -633,7 +633,7 @@ function openProfile(id){
     sb.from("follows").select("followee_id",{count:"exact",head:true}).eq("follower_id", id),
     priv ? sb.from("plays").select("score,total").eq("user_id", id).limit(1000) : none,
     sb.from("materials").select(MAT_COLS).eq("author_id", id).order("updated_at",{ascending:false}),
-    sb.from("teacher_reviews").select("teacher_id,stars,subject,comment,updated_at,teachers(name)").eq("user_id", id).order("updated_at",{ascending:false}).limit(100),
+    sb.from("teacher_reviews").select("teacher_id,stars,subject,updated_at,teachers(name)").eq("user_id", id).order("updated_at",{ascending:false}).limit(100),
     priv ? sb.from("material_purchases").select("created_at,materials("+MAT_COLS+")").eq("buyer_id", id).order("created_at",{ascending:false}) : none
   ]).then(function(r){
     if (seq !== peopleSeq) return;
@@ -834,7 +834,7 @@ function profileView(){
     P.reviews.length ? el("ul",{class:"history"}, P.reviews.map(function(x){
         return el("li",{},[
           el("span",{class:"txt"},[el("a",{class:"plink",href:"#t/"+x.teacher_id,text:(x.teachers && x.teachers.name) || "Učitel"}),
-            el("span",{class:"small bio1",text:x.comment}), el("span",{class:"muted small",text:(x.subject ? x.subject+" · " : "")+fmtDate(x.updated_at)})]),
+            el("span",{class:"muted small",text:(x.subject ? x.subject+" · " : "")+fmtDate(x.updated_at)})]),
           el("span",{class:"stars",text:starsText(x.stars)})
         ]);
       })) : el("p",{class:"muted",text:"Zatím žádné."}),
@@ -1731,11 +1731,12 @@ function openTeacher(id){
   S.tch = {id:id, loading:true};
   Promise.all([
     sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at").eq("id", id).maybeSingle(),
-    sb.from("teacher_reviews").select("teacher_id,user_id,stars,subject,comment,updated_at,profiles!teacher_reviews_user_id_fkey(nickname,avatar_v)").eq("teacher_id", id).order("updated_at",{ascending:false}).limit(300)
+    sb.rpc("get_teacher_reviews",{p_teacher:id})
   ]).then(function(r){
     if (seq !== tchSeq) return;
     var e = r[0].error || r[1].error;
-    S.tch = e ? {id:id, error:dbErrText(e)} : {id:id, t:r[0].data, reviews:r[1].data || [], reporting:false};
+    var reviews = (r[1].data || []).map(function(x){ x.profiles = {nickname:x.nickname, avatar_v:x.avatar_v}; return x; });
+    S.tch = e ? {id:id, error:dbErrText(e)} : {id:id, t:r[0].data, reviews:reviews, reporting:false};
     if (S.view === "tdetail") render();
   });
 }
@@ -1774,6 +1775,7 @@ function teacherDetailView(){
     ]),
     el("section",{class:"panel"},[
       el("h2",{text:"Recenze"}),
+      unlockBar(T, t),
       T.reviews.length ? el("ul",{class:"reviews"}, T.reviews.map(function(x){
         var own = x.user_id === S.me;
         return el("li",{},[
@@ -1781,7 +1783,7 @@ function teacherDetailView(){
           el("div",{class:"txt"},[
             el("div",{class:"row",style:"gap:8px"},[profileLink(x.user_id, x.profiles && x.profiles.nickname), el("span",{class:"stars",text:starsText(x.stars)}),
               x.subject ? el("span",{class:"pill subject",text:x.subject}) : null, el("span",{class:"muted small",text:fmtDate(x.updated_at)})]),
-            el("p",{text:x.comment}),
+            x.unlocked ? el("p",{text:x.comment}) : lockedReview(T, t, x),
             el("div",{class:"row",style:"gap:14px"},[
               (own || isAdmin()) ? el("button",{class:"btn link small danger-link",text: own ? "Smazat moji recenzi" : "Smazat (správce)",onclick:function(){
                 sb.from("teacher_reviews").delete().eq("teacher_id", t.id).eq("user_id", x.user_id).then(function(r){
@@ -1798,6 +1800,45 @@ function teacherDetailView(){
   ];
 }
 
+/* Zamčené recenze: text je rozmazaný a odemyká se za 1 kredit (dostane ho autor recenze).
+   Skutečný text databáze pošle až po odemčení, rozmazaný je jen vymyšlený výplňový text. */
+var FILL = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris".split(" ");
+function fillerText(len){
+  var out = "", i = 0;
+  while (out.length < len){ out += (out ? " " : "") + FILL[i % FILL.length]; i += 7; }
+  return out.slice(0, Math.max(len, 10));
+}
+function unlockOne(T, t, x, btn){
+  if (btn) { btn.disabled = true; btn.textContent = "Odemykám…"; }
+  return sb.rpc("unlock_review",{p_teacher:t.id, p_reviewer:x.user_id}).then(function(r){
+    if (r.error){ if (btn){ btn.disabled = false; btn.textContent = "Odemknout za 1 kredit"; } throw r.error; }
+    S.profile.credits = r.data; renderBar();
+  });
+}
+function lockedReview(T, t, x){
+  var btn = el("button",{class:"btn sm",type:"button",text:"Odemknout za 1 kredit",onclick:function(){
+    unlockOne(T, t, x, btn).then(function(){ openTeacher(t.id); }, function(e){ err("err", dbErrText(e)); });
+  }});
+  return el("div",{class:"locked"},[
+    el("p",{class:"blurred","aria-hidden":"true",text:fillerText(Math.max(x.comment_len || 0, 140))}),
+    el("div",{class:"lockover"},[el("span",{class:"small",text:"Recenze je zamčená"}), btn])
+  ]);
+}
+function unlockBar(T, t){
+  var locked = T.reviews.filter(function(x){ return !x.unlocked; });
+  if (!locked.length) return null;
+  var have = (S.profile && S.profile.credits) || 0;
+  var all = locked.length > 1 ? el("button",{class:"btn ghost sm",type:"button",text:"Odemknout všechny ("+kr(locked.length)+")",disabled: have < locked.length,onclick:function(e){
+    var b = e.currentTarget; b.disabled = true; b.textContent = "Odemykám…";
+    locked.reduce(function(p, x){ return p.then(function(){ return unlockOne(T, t, x); }); }, Promise.resolve())
+      .then(function(){ openTeacher(t.id); }, function(er){ openTeacher(t.id); S.msg = {kind:"err", text:dbErrText(er)}; });
+  }}) : null;
+  return el("div",{class:"unlockbar"},[
+    el("p",{class:"small",text:"Text recenzí je zamčený. Každou odemkneš za 1 kredit, kredit dostane autor recenze. Hvězdičky a předmět vidíš hned. Máš "+kr(have)+"."}),
+    all
+  ]);
+}
+
 /* Formulář recenze: vybrat existujícího učitele, nebo přidat nového. */
 function openReviewForm(teacherId){
   S.rev = {teacherId:teacherId || null, name:"", department:"", stars:0, subject:"", comment:"", existing:false, loading:!!teacherId};
@@ -1805,9 +1846,9 @@ function openReviewForm(teacherId){
   if (!teacherId) return;
   Promise.all([
     sb.from("teachers").select("id,name,department").eq("id", teacherId).maybeSingle(),
-    sb.from("teacher_reviews").select("stars,subject,comment").eq("teacher_id", teacherId).eq("user_id", S.me).maybeSingle()
+    sb.rpc("get_teacher_reviews",{p_teacher:teacherId})
   ]).then(function(r){
-    var t = r[0].data, mine = r[1].data;
+    var t = r[0].data, mine = (r[1].data || []).find(function(x){ return x.user_id === S.me; });
     if (t){ S.rev.name = t.name; S.rev.department = t.department || ""; }
     if (mine){ S.rev.stars = mine.stars; S.rev.subject = mine.subject || ""; S.rev.comment = mine.comment; S.rev.existing = true; }
     S.rev.loading = false;
