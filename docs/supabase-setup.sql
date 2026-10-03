@@ -1282,6 +1282,36 @@ as $$
 $$;
 
 -- =========================================================
+-- Registrace jen se školním e-mailem @studenti.czu.cz
+-- (stávající účty zůstávají; potvrzovací e-mail ověří, že adresa patří studentovi)
+-- =========================================================
+create or replace function public.allowed_email(p_email text)
+returns boolean
+language sql
+immutable
+as $$ select coalesce(lower(trim(p_email)) ~ '^[^@\s]+@studenti\.czu\.cz$', false); $$;
+
+create or replace function public.check_student_email()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' or new.email is distinct from old.email then
+    if not public.allowed_email(new.email) then
+      raise exception 'SKOLNI_EMAIL: Registrovat se můžou jen studenti se školním e-mailem @studenti.czu.cz.';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists on_auth_user_email_check on auth.users;
+create trigger on_auth_user_email_check
+  before insert or update of email on auth.users
+  for each row execute function public.check_student_email();
+
+-- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
 -- =========================================================
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
@@ -1381,3 +1411,4 @@ revoke all on function public.leaderboard(text, int) from public;
 revoke execute on function public.leaderboard(text, int) from anon;
 grant execute on function public.leaderboard(text, int) to authenticated;
 revoke all on function public.nick(uuid) from public, anon, authenticated;
+revoke all on function public.check_student_email() from public, anon, authenticated;

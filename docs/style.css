@@ -578,3 +578,15 @@ body.authpage #foot{border-top:0;margin-top:0}
 @media (max-width:600px){.tabs:not(.browse):not(.seg){border-radius:16px}}
 .nhead{flex-wrap:wrap}
 .pill{white-space:nowrap}
+
+/* ---------- příručka kreditů ---------- */
+.guidelink{display:block;background:var(--info-soft);color:var(--ink);border:1px solid color-mix(in srgb, var(--info) 25%, transparent);border-radius:12px;padding:12px 14px;text-decoration:none}
+.guidelink:hover{border-color:var(--info)}
+.guidelink strong{color:var(--info-strong)}
+.ways{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.way{display:flex;gap:16px;align-items:flex-start;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+.way > div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.way p{max-width:62ch}
+.wayn{flex:none;width:36px;height:36px;border-radius:12px;display:grid;place-items:center;font-family:var(--display);font-weight:700;background:var(--accent);color:#fff}
+.tips{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.footlinks{display:flex;gap:16px;flex-wrap:wrap}

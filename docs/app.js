@@ -72,6 +72,7 @@ function route(){
   }
   S.keepMsg = false;
   if (h === "#podminky"){ loadSiteInfo(); go("terms", keep); return; }
+  if (h === "#jak-ziskat-kredity"){ go("guide", keep); return; }
   if (h === "#zebricek"){ S.tab = "board"; openBoard(); go("board", keep); return; }
   if (h === "#ulozene"){ openFavorites(); go("favorites", keep); return; }
   var m = /^#u\/([0-9a-f-]{36})$/i.exec(h);
@@ -116,7 +117,8 @@ function authErrText(e){
   if (/Password should be/i.test(m)) return "Heslo je moc slabé. Musí mít aspoň 6 znaků.";
   if (/rate limit/i.test(m)) return "Moc pokusů za sebou. Chvíli počkej a zkus to znovu.";
   if (/valid email|invalid format/i.test(m)) return "Tohle nevypadá jako platný e-mail.";
-  if (/Database error saving new user/i.test(m)) return "Registrace se nepovedla. Nejspíš je přezdívka obsazená, zkus jinou.";
+  if (/SKOLNI_EMAIL/.test(m)) return "Registrovat se můžou jen studenti se školním e-mailem @studenti.czu.cz.";
+  if (/Database error saving new user/i.test(m)) return "Registrace se nepovedla. Zkontroluj, že používáš školní e-mail @studenti.czu.cz a že přezdívka není obsazená.";
   return "Nepovedlo se to: " + (m || "neznámá chyba") + ".";
 }
 
@@ -137,6 +139,7 @@ function view(){
     case "board": return boardView();
     case "favorites": return favoritesView();
     case "terms": return termsView();
+    case "guide": return guideView();
     case "lock": return [lockView()];
     case "buy": return buyView();
     case "play": return playView();
@@ -187,9 +190,14 @@ function icon(name, size){
 
 function authView(){
   var reg = S.authTab === "register";
-  var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true,placeholder:"jmeno@studenti.czu.cz"});
-  var nick = reg ? el("input",{type:"text",id:"au-nick",maxlength:"30",autocomplete:"nickname",placeholder:"Jak ti mají ostatní říkat"}) : null;
-  var pw = el("input",{type: S.showPw ? "text" : "password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true});
+  /* Hodnoty se drží v S.af, aby je překreslení po chybě nesmazalo. */
+  var AF = S.af || (S.af = {email:"", nick:"", pw:""});
+  var email = el("input",{type:"email",id:"au-email",autocomplete:"email",required:true,placeholder:"jmeno@studenti.czu.cz",oninput:function(e){ AF.email = e.target.value; }});
+  email.value = AF.email;
+  var nick = reg ? el("input",{type:"text",id:"au-nick",maxlength:"30",autocomplete:"nickname",placeholder:"Jak ti mají ostatní říkat",oninput:function(e){ AF.nick = e.target.value; }}) : null;
+  if (nick) nick.value = AF.nick;
+  var pw = el("input",{type: S.showPw ? "text" : "password",id:"au-pw",autocomplete: reg ? "new-password" : "current-password",required:true,oninput:function(e){ AF.pw = e.target.value; }});
+  pw.value = AF.pw;
   var pwToggle = el("button",{type:"button",class:"pwtoggle","aria-label": S.showPw ? "Skrýt heslo" : "Zobrazit heslo","aria-pressed":String(!!S.showPw),text: S.showPw ? "Skrýt" : "Zobrazit",onclick:function(){
     S.showPw = !S.showPw; var v = pw.value; render(); var n = document.getElementById("au-pw"); if (n){ n.value = v; n.focus(); }
   }});
@@ -200,7 +208,8 @@ function authView(){
       el("button",{type:"button",class:"tab","aria-pressed":String(!reg),text:"Přihlášení",onclick:function(){ S.authTab="login"; S.msg=null; render(); }}),
       el("button",{type:"button",class:"tab","aria-pressed":String(reg),text:"Registrace",onclick:function(){ S.authTab="register"; S.msg=null; render(); }})
     ]),
-    el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text:"E-mail"}), email]),
+    el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text: reg ? "Školní e-mail" : "E-mail"}), email,
+      reg ? el("p",{class:"muted small",text:"Registrovat se můžou jen studenti ČZU s adresou @studenti.czu.cz. Přijde ti na ni potvrzovací odkaz."}) : null]),
     reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Uvidí ji ostatní u tvých kvízů, materiálů a recenzí."})]) : null,
     el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), el("div",{class:"pwwrap"},[pw, pwToggle]), reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
     reg ? el("label",{class:"check"},[(function(){ var c = el("input",{type:"checkbox",id:"au-terms"}); c.checked = !!S.termsOk; c.addEventListener("change", function(){ S.termsOk = c.checked; }); return c; })(),
@@ -221,6 +230,7 @@ function doLogin(email, pw){
   sb.auth.signInWithPassword({email:email.trim(), password:pw}).then(function(r){
     S.busy = false;
     if (r.error) return err("err", authErrText(r.error));
+    S.af = null;
     /* zbytek dořeší onAuthStateChange */
   });
 }
@@ -228,6 +238,7 @@ function doLogin(email, pw){
 function doRegister(email, nick, pw){
   nick = (nick||"").trim();
   if (!S.termsOk) return err("err","Pro registraci je potřeba souhlasit s obchodními podmínkami.");
+  if (!/^[^@\s]+@studenti\.czu\.cz$/i.test((email || "").trim())) return err("err","Registrovat se můžou jen studenti se školním e-mailem @studenti.czu.cz.");
   if (nick.length < 2) return err("err","Přezdívka musí mít aspoň 2 znaky.");
   if (pw.length < 6) return err("err","Heslo musí mít aspoň 6 znaků.");
   S.busy = true; S.msg = null; render();
@@ -2203,6 +2214,7 @@ function creditsView(){
     head,
     msgEl(),
     el("p",{class:"muted",text:"Za kredity si odemkneš placené kvízy, materiály a recenze učitelů. Zaplatíš převodem přes QR kód v bankovní aplikaci, kredity se připíšou, jakmile platba dorazí."}),
+    el("a",{class:"guidelink",href:"#jak-ziskat-kredity"},[el("strong",{text:"Nechceš platit?"}), " Kredity se dají získat i zdarma: přidáváním kvízů, materiálů a recenzí. Jak na to →"]),
     el("label",{class:"check consent"},[(function(){ var c = el("input",{type:"checkbox",id:"cr-consent",onchange:function(e){ S.crConsent = e.target.checked; render(); }}); c.checked = !!S.crConsent; return c; })(),
       el("span",{},["Souhlasím s ", el("a",{class:"plink",href:"#podminky",text:"obchodními podmínkami"}), " a s tím, že kredity budou připsány hned po přijetí platby. Beru na vědomí, že tím ztrácím právo odstoupit od smlouvy do 14 dnů."])]),
     packs,
@@ -2584,13 +2596,59 @@ function termsView(){
   ];
 }
 
+/* =========================================================
+   Příručka: jak získat kredity
+   ========================================================= */
+function guideView(){
+  function way(n, title, text, extra){ return el("li",{class:"way"},[el("span",{class:"wayn",text:String(n)}), el("div",{},[el("h3",{text:title}), el("p",{text:text}), extra || null])]); }
+  return [
+    el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Příručka"}), el("h1",{text:"Jak získat kredity"})]),
+      el("div",{class:"balance"},[el("span",{class:"small muted",text:"Teď máš"}), el("strong",{text:kr((S.profile && S.profile.credits) || 0)})])]),
+    el("p",{class:"muted",text:"Kredity utrácíš za placené kvízy, materiály a odemčení recenzí učitelů. Získat je jde čtyřmi způsoby, tři z nich jsou zdarma."}),
+    el("ol",{class:"ways"},[
+      way(1, "Prodávej svoje kvízy a materiály",
+        "Při přidávání kvízu nebo materiálu nastav cenu v kreditech. Kdykoli si ho někdo koupí, dostaneš celou cenu ty. Jeden dobrý materiál ti může vydělávat celý semestr.",
+        el("div",{class:"row"},[el("a",{class:"btn sm",href:"#pridat/material",text:"Přidat materiál"}), el("a",{class:"btn ghost sm",href:"#pridat/kviz",text:"Přidat kvíz"})])),
+      way(2, "Piš recenze učitelů",
+        "Text recenze je pro ostatní zamčený. Kdo si ji chce přečíst, zaplatí 1 kredit a ten dostaneš ty. Čím užitečnější recenze, tím víc lidí si ji odemkne.",
+        el("div",{class:"row"},[el("a",{class:"btn sm",href:"#pridat/recenze",text:"Napsat recenzi"})])),
+      way(3, "Odměny od správce",
+        "Za aktivitu, například hodně kvalitních materiálů nebo pomoc s moderováním, může správce připsat kredity navíc. Uvidíš je v historii kreditů na svém profilu."),
+      way(4, "Kup si kredity",
+        "Když spěcháš, kredity si koupíš převodem přes QR kód. 10 kreditů stojí 50 Kč, výhodnější jsou větší balíčky.",
+        el("div",{class:"row"},[el("a",{class:"btn ghost sm",href:"#kredity",text:"Koupit kredity"})]))
+    ]),
+    el("section",{class:"panel"},[
+      el("h2",{text:"Tipy, jak prodávat víc"}),
+      el("ul",{class:"tips"},[
+        el("li",{text:"Vyplň předmět a štítky (třeba „zkouška“, „1. ročník“), ať tvůj obsah lidi najdou."}),
+        el("li",{text:"Napiš krátký popis, co v materiálu je a z jaké přednášky."}),
+        el("li",{text:"Obsah se štítkem „Ověřeno moderátorem“ působí důvěryhodněji. Dbej na kvalitu, ať ho moderátor rád ověří."}),
+        el("li",{text:"Začni s nižší cenou, třeba 2–5 kreditů. Levnější věci se kupují častěji."}),
+        el("li",{text:"Nahrávej jen vlastní obsah. Cizí skripta a testy bez svolení autora moderátor smaže."})
+      ])
+    ]),
+    el("section",{class:"panel"},[
+      el("h2",{text:"Kolik co stojí"}),
+      el("dl",{class:"stats two"},[
+        el("div",{},[el("dt",{text:"Odemčení recenze"}), el("dd",{text:"1 kredit"})]),
+        el("div",{},[el("dt",{text:"Kvízy a materiály"}), el("dd",{text:"cenu určí autor"})])
+      ]),
+      el("p",{class:"muted small",text:"Kredity nejdou směnit zpátky za peníze. Svoje příjmy a útraty uvidíš v historii kreditů na profilu."})
+    ])
+  ];
+}
+
 /* Patička na každé stránce. */
 var foot = document.getElementById("foot");
 function renderFoot(){
   if (!foot) return;
   foot.replaceChildren(el("div",{class:"footin"},[
     el("span",{text:"ČZU Hub · neoficiální studentský web"}),
-    el("a",{href:"#podminky",text:"Obchodní podmínky a ochrana údajů"})
+    el("span",{class:"footlinks"},[
+      S.me ? el("a",{href:"#jak-ziskat-kredity",text:"Jak získat kredity"}) : null,
+      el("a",{href:"#podminky",text:"Obchodní podmínky a ochrana údajů"})
+    ])
   ]));
 }
 
