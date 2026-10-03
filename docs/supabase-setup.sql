@@ -1111,10 +1111,175 @@ alter table public.site_settings enable row level security;
 alter table public.credit_orders enable row level security;
 drop policy if exists "site_settings: prihlaseni ctou" on public.site_settings;
 create policy "site_settings: prihlaseni ctou" on public.site_settings for select to authenticated using (true);
+-- Obchodní podmínky (provozovatel, kontakt) musí jít přečíst i bez přihlášení.
+drop policy if exists "site_settings: verejne" on public.site_settings;
+create policy "site_settings: verejne" on public.site_settings for select to anon using (true);
 drop policy if exists "site_settings: spravce meni" on public.site_settings;
 create policy "site_settings: spravce meni" on public.site_settings for update to authenticated using (public.is_admin()) with check (public.is_admin());
 drop policy if exists "credit_orders: vlastni nebo spravce" on public.credit_orders;
 create policy "credit_orders: vlastni nebo spravce" on public.credit_orders for select to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- =========================================================
+-- Upozornění (zvoneček), oblíbené, žebříček, údaje provozovatele
+-- =========================================================
+alter table public.site_settings add column if not exists operator_name text check (operator_name is null or char_length(operator_name) <= 100);
+alter table public.site_settings add column if not exists contact_email text check (contact_email is null or contact_email ~* '^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+create table if not exists public.notifications (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  kind text not null,
+  body text not null check (char_length(body) <= 300),
+  link text check (link is null or link ~ '^#[A-Za-z0-9/_-]*$'),
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
+
+create table if not exists public.favorites (
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  kind text not null check (kind in ('quiz', 'material', 'teacher')),
+  item_id uuid not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, kind, item_id)
+);
+
+alter table public.notifications enable row level security;
+alter table public.favorites enable row level security;
+drop policy if exists "notifications: vlastni" on public.notifications;
+create policy "notifications: vlastni" on public.notifications for select to authenticated using (user_id = auth.uid());
+drop policy if exists "notifications: precist" on public.notifications;
+create policy "notifications: precist" on public.notifications for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "notifications: smazat" on public.notifications;
+create policy "notifications: smazat" on public.notifications for delete to authenticated using (user_id = auth.uid());
+drop policy if exists "favorites: vlastni" on public.favorites;
+create policy "favorites: vlastni" on public.favorites for select to authenticated using (user_id = auth.uid());
+drop policy if exists "favorites: pridat" on public.favorites;
+create policy "favorites: pridat" on public.favorites for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "favorites: odebrat" on public.favorites;
+create policy "favorites: odebrat" on public.favorites for delete to authenticated using (user_id = auth.uid());
+
+create or replace function public.notify(p_user uuid, p_kind text, p_body text, p_link text)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  insert into public.notifications (user_id, kind, body, link)
+  select p_user, p_kind, left(p_body, 300), p_link
+  where p_user is not null and p_user is distinct from auth.uid();
+$$;
+revoke all on function public.notify(uuid, text, text, text) from public, anon, authenticated;
+
+create or replace function public.nick(p uuid)
+returns text
+language sql
+security definer
+set search_path = ''
+stable
+as $$ select coalesce((select nickname from public.profiles where id = p), 'Někdo'); $$;
+
+-- Kredity připsané někým jiným (prodej, odemčení recenze, správce, platba).
+create or replace function public.notify_credit()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if new.amount > 0 and new.by_id is distinct from new.user_id then
+    perform public.notify(new.user_id, 'credits', '+' || new.amount || ' ' ||
+      case when new.amount = 1 then 'kredit' when new.amount between 2 and 4 then 'kredity' else 'kreditů' end || ': ' || new.reason, '#u/' || new.user_id);
+  end if;
+  return null;
+end; $$;
+drop trigger if exists credit_log_notify on public.credit_log;
+create trigger credit_log_notify after insert on public.credit_log for each row execute function public.notify_credit();
+
+create or replace function public.notify_follow()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  perform public.notify(new.followee_id, 'follow', public.nick(new.follower_id) || ' tě začal(a) sledovat.', '#u/' || new.follower_id);
+  return null;
+end; $$;
+drop trigger if exists follows_notify on public.follows;
+create trigger follows_notify after insert on public.follows for each row execute function public.notify_follow();
+
+create or replace function public.notify_rating()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_author uuid; v_title text;
+begin
+  select author_id, title into v_author, v_title from public.quizzes where id = new.quiz_id;
+  perform public.notify(v_author, 'rating', public.nick(new.user_id) || ' ohodnotil(a) tvůj kvíz „' || v_title || '“: ' || repeat('★', new.stars), '#q/' || new.quiz_id);
+  return null;
+end; $$;
+drop trigger if exists ratings_notify on public.ratings;
+create trigger ratings_notify after insert on public.ratings for each row execute function public.notify_rating();
+
+-- Nový kvíz nebo materiál: dostanou ho všichni, kdo autora sledují.
+create or replace function public.notify_new_content()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_what text := case when tg_table_name = 'quizzes' then 'kvíz' else 'materiál' end;
+        v_link text := case when tg_table_name = 'quizzes' then '#q/' else '#m/' end || new.id;
+begin
+  insert into public.notifications (user_id, kind, body, link)
+  select f.follower_id, 'new', left(public.nick(new.author_id) || ' přidal(a) nový ' || v_what || ' „' || new.title || '“.', 300), v_link
+  from public.follows f where f.followee_id = new.author_id;
+  return null;
+end; $$;
+drop trigger if exists quizzes_notify_new on public.quizzes;
+create trigger quizzes_notify_new after insert on public.quizzes for each row execute function public.notify_new_content();
+drop trigger if exists materials_notify_new on public.materials;
+create trigger materials_notify_new after insert on public.materials for each row execute function public.notify_new_content();
+
+-- Ověření moderátorem: dá vědět autorovi (u učitele tomu, kdo ho přidal).
+create or replace function public.notify_verified()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare v_owner uuid; v_text text; v_link text;
+begin
+  if old.verified_at is not null or new.verified_at is null then return null; end if;
+  if tg_table_name = 'quizzes' then v_owner := new.author_id; v_text := 'Tvůj kvíz „' || new.title || '“ ověřil moderátor.'; v_link := '#q/' || new.id;
+  elsif tg_table_name = 'materials' then v_owner := new.author_id; v_text := 'Tvůj materiál „' || new.title || '“ ověřil moderátor.'; v_link := '#m/' || new.id;
+  else v_owner := new.created_by; v_text := 'Učitele „' || new.name || '“, kterého jsi přidal(a), ověřil moderátor.'; v_link := '#t/' || new.id;
+  end if;
+  perform public.notify(v_owner, 'verified', v_text, v_link);
+  return null;
+end; $$;
+drop trigger if exists quizzes_notify_verified on public.quizzes;
+create trigger quizzes_notify_verified after update of verified_at on public.quizzes for each row execute function public.notify_verified();
+drop trigger if exists materials_notify_verified on public.materials;
+create trigger materials_notify_verified after update of verified_at on public.materials for each row execute function public.notify_verified();
+drop trigger if exists teachers_notify_verified on public.teachers;
+create trigger teachers_notify_verified after update of verified_at on public.teachers for each row execute function public.notify_verified();
+
+-- Žebříček: veřejné souhrny bez osobních detailů.
+create or replace function public.leaderboard(p_kind text, p_days int default null)
+returns table (user_id uuid, nickname text, avatar_v bigint, value bigint)
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  with since as (select case when p_days is null then '-infinity'::timestamptz else now() - make_interval(days => p_days) end as t),
+  vals as (
+    select l.user_id as uid, sum(l.amount)::bigint as v from public.credit_log l, since
+      where p_kind = 'authors' and l.amount > 0 and l.created_at >= since.t
+        and (l.reason like 'Prodej%' or l.reason like 'Někdo odemkl%')
+      group by l.user_id
+    union all
+    select p.user_id, count(*)::bigint from public.plays p, since
+      where p_kind = 'players' and p.created_at >= since.t group by p.user_id
+    union all
+    select r.user_id, count(*)::bigint from public.teacher_reviews r, since
+      where p_kind = 'reviewers' and r.created_at >= since.t group by r.user_id
+    union all
+    select x.author_id, count(*)::bigint from (
+        select author_id, created_at from public.quizzes
+        union all select author_id, created_at from public.materials) x, since
+      where p_kind = 'creators' and x.created_at >= since.t group by x.author_id
+  )
+  select pr.id, pr.nickname, pr.avatar_v, vals.v
+  from vals join public.profiles pr on pr.id = vals.uid
+  where auth.uid() is not null and vals.v > 0
+  order by vals.v desc, pr.nickname
+  limit 20;
+$$;
 
 -- =========================================================
 -- Oprávnění: kredity a správce se mění jen přes funkce výše
@@ -1122,9 +1287,13 @@ create policy "credit_orders: vlastni nebo spravce" on public.credit_orders for 
 revoke all on public.profiles, public.quizzes, public.quiz_content, public.purchases, public.credit_log,
   public.ratings, public.plays, public.follows, public.reports,
   public.teachers, public.teacher_reviews, public.materials, public.material_content, public.material_purchases,
-  public.review_unlocks, public.site_settings, public.credit_orders from anon, authenticated;
+  public.review_unlocks, public.site_settings, public.credit_orders, public.notifications, public.favorites from anon, authenticated;
 grant select on public.site_settings, public.credit_orders to authenticated;
-grant update (bank_iban, bank_name, updated_at) on public.site_settings to authenticated;
+grant select (id, operator_name, contact_email, updated_at) on public.site_settings to anon;
+grant update (bank_iban, bank_name, operator_name, contact_email, updated_at) on public.site_settings to authenticated;
+grant select, delete on public.notifications to authenticated;
+grant update (is_read) on public.notifications to authenticated;
+grant select, insert, delete on public.favorites to authenticated;
 grant select on public.teachers to authenticated;
 grant insert (name, department) on public.teachers to authenticated;
 grant update (name, department) on public.teachers to authenticated;
@@ -1208,3 +1377,7 @@ grant execute on function public.cancel_credit_order(bigint) to authenticated;
 revoke all on function public.admin_confirm_order(bigint) from public;
 revoke execute on function public.admin_confirm_order(bigint) from anon;
 grant execute on function public.admin_confirm_order(bigint) to authenticated;
+revoke all on function public.leaderboard(text, int) from public;
+revoke execute on function public.leaderboard(text, int) from anon;
+grant execute on function public.leaderboard(text, int) to authenticated;
+revoke all on function public.nick(uuid) from public, anon, authenticated;

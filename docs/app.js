@@ -56,6 +56,7 @@ function render(){
   document.body.classList.toggle("authpage", S.view === "auth");
   app.replaceChildren.apply(app, view().filter(Boolean));
   renderBar();
+  renderFoot();
   if (id){ var n = document.getElementById(id); if (n){ n.focus(); try { n.setSelectionRange(sel[0], sel[1]); } catch(e) {} } }
 }
 function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); window.scrollTo(0,0); }
@@ -63,8 +64,16 @@ function go(v, keepMsg){ S.view = v; if (!keepMsg) S.msg = null; render(); windo
    #t/<id> (učitel), #pridat/kviz | material | recenze[/<učitel>], #admin (správa). */
 function nav(h, keepMsg){ S.keepMsg = !!keepMsg; if (location.hash === h) route(); else location.hash = h; }
 function route(){
-  if (!S.me) return;
-  var h = location.hash, keep = S.keepMsg; S.keepMsg = false;
+  var h = location.hash, keep = S.keepMsg;
+  if (!S.me){
+    if (h === "#podminky"){ loadSiteInfo(); go("terms"); }
+    else if (S.view === "terms") go("auth");
+    return;
+  }
+  S.keepMsg = false;
+  if (h === "#podminky"){ loadSiteInfo(); go("terms", keep); return; }
+  if (h === "#zebricek"){ S.tab = "board"; openBoard(); go("board", keep); return; }
+  if (h === "#ulozene"){ openFavorites(); go("favorites", keep); return; }
   var m = /^#u\/([0-9a-f-]{36})$/i.exec(h);
   if (m){ openProfile(m[1]); go("profile", keep); return; }
   var mq = /^#q\/([0-9a-f-]{36})$/i.exec(h);
@@ -125,6 +134,9 @@ function view(){
     case "tdetail": return teacherDetailView();
     case "revform": return reviewFormView();
     case "credits": return creditsView();
+    case "board": return boardView();
+    case "favorites": return favoritesView();
+    case "terms": return termsView();
     case "lock": return [lockView()];
     case "buy": return buyView();
     case "play": return playView();
@@ -163,7 +175,10 @@ var ICONS = {
   file: ["M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z", "M14 3v5h5", "M9 13h6", "M9 17h4"],
   link: ["M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"],
   text: ["M5 6h14", "M5 10h14", "M5 14h14", "M5 18h9"],
-  teacher: ["M2.5 9.5L12 5l9.5 4.5L12 14z", "M6.5 11.8V16c0 1.4 2.5 3 5.5 3s5.5-1.6 5.5-3v-4.2", "M21.5 9.5v5"]
+  teacher: ["M2.5 9.5L12 5l9.5 4.5L12 14z", "M6.5 11.8V16c0 1.4 2.5 3 5.5 3s5.5-1.6 5.5-3v-4.2", "M21.5 9.5v5"],
+  bell: ["M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z", "M10 20.5a2 2 0 0 0 4 0"],
+  bookmark: ["M7 3.5h10a1 1 0 0 1 1 1V21l-6-4-6 4V4.5a1 1 0 0 1 1-1z"],
+  trophy: ["M8 4h8v5a4 4 0 0 1-8 0z", "M8 6H5a3 3 0 0 0 3 4", "M16 6h3a3 3 0 0 1-3 4", "M12 13v4", "M8.5 20.5h7", "M10 17h4v3.5h-4z"]
 };
 function icon(name, size){
   return svgEl("svg",{viewBox:"0 0 24 24",width:String(size||22),height:String(size||22),fill:"none",stroke:"currentColor","stroke-width":"1.8","stroke-linecap":"round","stroke-linejoin":"round","aria-hidden":"true",class:"ico"},
@@ -188,6 +203,8 @@ function authView(){
     el("div",{class:"field"},[el("label",{class:"label",for:"au-email",text:"E-mail"}), email]),
     reg ? el("div",{class:"field"},[el("label",{class:"label",for:"au-nick",text:"Přezdívka"}), nick, el("p",{class:"muted small",text:"Uvidí ji ostatní u tvých kvízů, materiálů a recenzí."})]) : null,
     el("div",{class:"field"},[el("label",{class:"label",for:"au-pw",text:"Heslo"}), el("div",{class:"pwwrap"},[pw, pwToggle]), reg ? el("p",{class:"muted small",text:"Aspoň 6 znaků."}) : null]),
+    reg ? el("label",{class:"check"},[(function(){ var c = el("input",{type:"checkbox",id:"au-terms"}); c.checked = !!S.termsOk; c.addEventListener("change", function(){ S.termsOk = c.checked; }); return c; })(),
+      el("span",{},["Souhlasím s ", el("a",{class:"plink",href:"#podminky",text:"obchodními podmínkami a zpracováním údajů"})])]) : null,
     msgEl(),
     btn
   ]);
@@ -210,6 +227,7 @@ function doLogin(email, pw){
 
 function doRegister(email, nick, pw){
   nick = (nick||"").trim();
+  if (!S.termsOk) return err("err","Pro registraci je potřeba souhlasit s obchodními podmínkami.");
   if (nick.length < 2) return err("err","Přezdívka musí mít aspoň 2 znaky.");
   if (pw.length < 6) return err("err","Heslo musí mít aspoň 6 znaků.");
   S.busy = true; S.msg = null; render();
@@ -241,7 +259,7 @@ function isAdmin(){ return !!(S.profile && S.profile.is_admin); }
 function isMod(){ return !!(S.profile && (S.profile.is_moderator || S.profile.is_admin)); }
 function roleBadges(p){ return [p && p.is_admin ? el("span",{class:"pill admin",text:"Správce"}) : null, p && p.is_moderator ? el("span",{class:"pill mod",text:"Moderátor"}) : null]; }
 function verifiedPill(){ return el("span",{class:"pill verified",text:"✓ Ověřeno moderátorem"}); }
-function statusPill(item){ return item.verified_at ? verifiedPill() : el("span",{class:"pill pending",text:"Čeká na schválení moderátorem"}); }
+function statusPill(item, short){ return item.verified_at ? (short ? el("span",{class:"pill verified",text:"✓ Ověřeno"}) : verifiedPill()) : el("span",{class:"pill pending",text: short ? "Čeká na schválení" : "Čeká na schválení moderátorem"}); }
 /* Ověření moderátorem: společné pro kvízy, materiály a učitele. */
 var VERIFY = {
   quiz:     {rpc:"set_quiz_verified",     arg:"p_quiz",     what:"Kvíz",     ok:"Kvíz je označený jako ověřený."},
@@ -343,7 +361,7 @@ function renderBar(){
   bar.hidden = false;
   var cur = S.view === "people" ? "people" : S.view === "admin" ? "admin"
           : (S.view === "profile" && S.prof && S.prof.id === S.me) ? "me" : S.view === "profile" ? "people"
-          : /^(edit|medit|revform)$/.test(S.view) ? "add" : "home";
+          : /^(edit|medit|revform)$/.test(S.view) ? "add" : S.view === "favorites" || S.view === "credits" || S.view === "terms" ? "none" : "home";
   function link(href, text, key, extra){ return el("a",{href:href, class:"navlink", "aria-current": cur === key ? "page" : null},[text, extra || null]); }
   bar.replaceChildren(el("div",{class:"barin"},[
     el("a",{href:"#kvizy",class:"brand","aria-label":"ČZU Hub, domů"},[logoMark(36), wordmark("studentský web")]),
@@ -356,11 +374,13 @@ function renderBar(){
           el("a",{href:"#pridat/kviz",role:"menuitem"},[el("span",{class:"cardicon sm"},[icon("quiz",18)]), el("span",{class:"mi"},[el("strong",{text:"Kvíz"}), el("span",{text:"Otázky na procvičení"})])])
         ])
       ]),
-      link("#"+({quizzes:"kvizy",materials:"materialy",teachers:"ucitele"}[S.tab] || "kvizy"),"Procházet","home"),
+      link("#"+({quizzes:"kvizy",materials:"materialy",teachers:"ucitele",board:"zebricek"}[S.tab] || "kvizy"),"Procházet","home"),
       link("#lide","Lidé","people"),
       isAdmin() ? link("#admin","Správa","admin", S.openReports ? el("span",{class:"badge","aria-label":S.openReports+" nevyřešených nahlášení",text:String(S.openReports)}) : null) : null,
       link("#u/"+S.me,"Můj profil","me"),
       el("a",{href:"#kredity", class:"credits", title:"Tvoje kredity, klikni pro dobití", text:kr((S.profile && S.profile.credits) || 0)+" +"}),
+      el("a",{href:"#ulozene", class:"iconbtn"+(S.view === "favorites" ? " current" : ""), "aria-label":"Uložené", title:"Uložené"},[icon("bookmark", 20)]),
+      bellMenu(),
       el("button",{class:"navlink navbtn",text:"Odhlásit",onclick:logout}),
       el("button",{class:"themebtn",type:"button","aria-label":"Přepnout světlý a tmavý vzhled",text: isDark() ? "Světlý" : "Tmavý",onclick:toggleTheme})
     ])
@@ -371,7 +391,7 @@ function renderBar(){
 function quizCard(q, showAuthor){
   var mine = q.author_id === S.me, n = q.question_count || 0, owned = !!S.owned[q.id];
   var pills = [
-    statusPill(q),
+    statusPill(q, true),
     q.subject ? el("span",{class:"pill subject",text:q.subject}) : null,
     q.price ? el("span",{class:"pill price",text:kr(q.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
     mine ? el("span",{class:"pill mine",text:"Tvůj"}) : null,
@@ -511,6 +531,7 @@ function detailView(){
          : el("button",{class:"btn",text:"Koupit za "+kr(q.price),onclick:function(){ S.buyFor = {type:"quiz", item:q}; go("buy"); }}),
     mine ? el("button",{class:"btn ghost",text:"Upravit",onclick:function(){ openQuiz(q.id, "edit"); }}) : null,
     (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDelete(e.currentTarget, q.id); }}) : null,
+    favButton("quiz", q.id),
     verifyButton("quiz", q, function(){ S.quizzes.forEach(function(x){ if (x.id === q.id) x.verified_at = q.verified_at ? null : new Date().toISOString(); }); openDetail(q.id); render(); })
   ]);
 
@@ -1472,7 +1493,7 @@ var KIND_LABEL = {file:"Soubor", link:"Odkaz", text:"Text"};
 
 function browseTabs(){
   function t(href, key, text){ return el("a",{href:href, class:"tab", "aria-current": S.tab === key ? "page" : null, text:text}); }
-  return el("nav",{class:"tabs browse","aria-label":"Co procházet"},[ t("#kvizy","quizzes","Kvízy"), t("#materialy","materials","Materiály"), t("#ucitele","teachers","Učitelé") ]);
+  return el("nav",{class:"tabs browse","aria-label":"Co procházet"},[ t("#kvizy","quizzes","Kvízy"), t("#materialy","materials","Materiály"), t("#ucitele","teachers","Učitelé"), t("#zebricek","board","Žebříček") ]);
 }
 
 function loadMaterials(){
@@ -1501,7 +1522,7 @@ function materialCard(m, showAuthor){
     el("span",{class:"cardicon"},[icon(m.kind === "link" ? "link" : m.kind === "text" ? "text" : "file")]),
     el("span",{class:"txt"},[
       el("span",{class:"row",style:"gap:6px"},[
-        statusPill(m),
+        statusPill(m, true),
         m.subject ? el("span",{class:"pill subject",text:m.subject}) : null,
         el("span",{class:"pill kind",text:KIND_LABEL[m.kind] || "Materiál"}),
         m.price ? el("span",{class:"pill price",text:kr(m.price)}) : el("span",{class:"pill free",text:"Zdarma"}),
@@ -1566,7 +1587,7 @@ function teacherCard(t){
   return el("a",{class:"card teacher",href:"#t/"+t.id},[
     el("span",{class:"avatar","aria-hidden":"true",text:t.name.replace(/^(?:(?:doc|prof|ing|mgr|bc|rndr|phdr|judr|mudr|ph\.d|csc|drsc|dr)\.?\s+)+/i, "").charAt(0).toUpperCase()}),
     el("span",{class:"txt"},[
-      el("span",{class:"row",style:"gap:8px"},[el("strong",{text:t.name}), statusPill(t)]),
+      el("span",{class:"row",style:"gap:8px"},[el("strong",{text:t.name}), statusPill(t, true)]),
       t.department ? el("span",{class:"muted small",text:t.department}) : null,
       el("span",{class:"small"},[el("span",{class: t.rating_count ? "stars" : "muted",text: t.rating_count ? starsText(t.rating_avg)+" "+Number(t.rating_avg).toFixed(1).replace(".", ",") : "Bez recenzí"}),
         t.rating_count ? el("span",{class:"muted",text:" · "+t.rating_count+" "+plural(t.rating_count,"recenze","recenze","recenzí")}) : null])
@@ -1668,6 +1689,7 @@ function materialDetailView(){
     msgEl(),
     el("div",{class:"row"},[
       openBtn,
+      favButton("material", m.id),
       mine ? el("a",{class:"btn ghost",href:"#m/"+m.id+"/upravit",text:"Upravit"}) : null,
       (mine || isAdmin()) ? el("button",{class:"btn ghost danger-btn",text: mine ? "Smazat" : "Smazat (správce)",onclick:function(e){ confirmDeleteMaterial(e.currentTarget, m, M.c); }}) : null,
       isMod() ? el("button",{class:"btn "+(m.verified_at ? "ghost" : "info"),text: m.verified_at ? "Zrušit ověření" : "✓ Ověřit materiál",onclick:function(e){
@@ -1905,6 +1927,7 @@ function teacherDetailView(){
       msgEl(),
       el("div",{class:"row"},[
         el("a",{class:"btn",href:"#pridat/recenze/"+t.id,text: mine ? "Upravit moji recenzi" : "Napsat recenzi"}),
+        favButton("teacher", t.id),
         verifyButton("teacher", t, function(){ S.teachers = null; openTeacher(t.id); render(); }),
         isAdmin() ? el("button",{class:"btn ghost danger-btn",text:"Smazat učitele (správce)",onclick:function(e){
           var b = e.currentTarget;
@@ -2150,7 +2173,8 @@ function creditsView(){
 
   var packs = el("div",{class:"packs"}, PACKAGES.map(function(p){
     var per = (p.price / p.credits).toFixed(1).replace(".", ",").replace(",0", "");
-    var btn = el("button",{class:"btn block",type:"button",text:"Koupit za "+p.price+" Kč",onclick:function(){
+    var btn = el("button",{class:"btn block",type:"button",text:"Koupit za "+p.price+" Kč",disabled:!S.crConsent,onclick:function(){
+      if (!S.crConsent) return err("err","Nejdřív zaškrtni souhlas s podmínkami.");
       btn.disabled = true; btn.textContent = "Vytvářím objednávku…";
       sb.rpc("create_credit_order",{p_package:p.key}).then(function(r){
         if (r.error){ btn.disabled = false; btn.textContent = "Koupit za "+p.price+" Kč"; return err("err", dbErrText(r.error)); }
@@ -2179,6 +2203,8 @@ function creditsView(){
     head,
     msgEl(),
     el("p",{class:"muted",text:"Za kredity si odemkneš placené kvízy, materiály a recenze učitelů. Zaplatíš převodem přes QR kód v bankovní aplikaci, kredity se připíšou, jakmile platba dorazí."}),
+    el("label",{class:"check consent"},[(function(){ var c = el("input",{type:"checkbox",id:"cr-consent",onchange:function(e){ S.crConsent = e.target.checked; render(); }}); c.checked = !!S.crConsent; return c; })(),
+      el("span",{},["Souhlasím s ", el("a",{class:"plink",href:"#podminky",text:"obchodními podmínkami"}), " a s tím, že kredity budou připsány hned po přijetí platby. Beru na vědomí, že tím ztrácím právo odstoupit od smlouvy do 14 dnů."])]),
     packs,
     el("h2",{text:"Moje objednávky"}),
     orders
@@ -2221,7 +2247,7 @@ function loadAdminPayments(A){
   return Promise.all([
     sb.from("credit_orders").select("id,credits,price_czk,vs,created_at,user_id,profiles!credit_orders_user_id_fkey(nickname)").eq("status","pending").order("created_at",{ascending:true}).limit(300),
     sb.from("credit_orders").select("price_czk").eq("status","paid").limit(10000),
-    sb.from("site_settings").select("bank_iban,bank_name").eq("id", 1).maybeSingle()
+    sb.from("site_settings").select("bank_iban,bank_name,operator_name,contact_email").eq("id", 1).maybeSingle()
   ]).then(function(r){
     A.orders = r[0].data || []; A.earned = (r[1].data || []).reduce(function(a,x){ return a + x.price_czk; }, 0);
     A.settings = r[2].data || {}; A.payErr = (r[0].error || r[1].error || r[2].error) ? dbErrText(r[0].error || r[1].error || r[2].error) : null;
@@ -2233,24 +2259,34 @@ function adminPayments(A){
   acc.value = A.settings && A.settings.bank_iban ? ibanToCz(A.settings.bank_iban) : "";
   var nm = el("input",{type:"text",id:"adm-bankname",maxlength:"60",placeholder:"Jméno majitele účtu"});
   nm.value = (A.settings && A.settings.bank_name) || "";
-  var save = el("button",{class:"btn sm",type:"submit",text:"Uložit účet"});
+  var op = el("input",{type:"text",id:"adm-operator",maxlength:"100",placeholder:"Jméno a příjmení (případně IČO)"});
+  op.value = (A.settings && A.settings.operator_name) || "";
+  var mail = el("input",{type:"email",id:"adm-mail",placeholder:"kontakt@email.cz"});
+  mail.value = (A.settings && A.settings.contact_email) || "";
+  var save = el("button",{class:"btn sm",type:"submit",text:"Uložit"});
   var form = el("form",{class:"panel",onsubmit:function(e){
     e.preventDefault();
     var iban = toCzIban(acc.value);
     if (!iban) return err("err","Tohle číslo účtu nevypadá správně. Zadej ho jako 123456789/0800 nebo jako IBAN.","pay");
     save.disabled = true;
-    sb.from("site_settings").update({bank_iban:iban, bank_name:nm.value.trim() || null, updated_at:new Date().toISOString()}).eq("id", 1).then(function(r){
+    var em = mail.value.trim();
+    if (em && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return err("err","Kontaktní e-mail nevypadá správně.","pay");
+    sb.from("site_settings").update({bank_iban:iban, bank_name:nm.value.trim() || null, operator_name:op.value.trim() || null, contact_email:em || null, updated_at:new Date().toISOString()}).eq("id", 1).then(function(r){
       save.disabled = false;
       if (r.error) return err("err", dbErrText(r.error), "pay");
-      A.settings = {bank_iban:iban, bank_name:nm.value.trim() || null};
-      err("ok","Účet uložen: "+ibanToCz(iban)+" ("+fmtIban(iban)+").","pay");
+      A.settings = {bank_iban:iban, bank_name:nm.value.trim() || null, operator_name:op.value.trim() || null, contact_email:em || null};
+      err("ok","Uloženo. Účet: "+ibanToCz(iban)+" ("+fmtIban(iban)+").","pay");
     });
   }},[
-    el("h2",{text:"Účet pro platby"}),
-    el("p",{class:"muted small",text:"Na tenhle účet budou lidi posílat peníze za kredity. Uvidí ho každý, kdo si kredity kupuje."}),
+    el("h2",{text:"Účet pro platby a provozovatel"}),
+    el("p",{class:"muted small",text:"Na tenhle účet budou lidi posílat peníze za kredity. Uvidí ho každý, kdo si kredity kupuje. Jméno provozovatele a e-mail se ukážou v obchodních podmínkách."}),
     el("div",{class:"grid2 even"},[
       el("div",{class:"field"},[el("label",{class:"label",for:"adm-iban",text:"Číslo účtu"}), acc]),
-      el("div",{class:"field"},[el("label",{class:"label",for:"adm-bankname",text:"Příjemce"}), nm])
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-bankname",text:"Příjemce (popisek u platby)"}), nm])
+    ]),
+    el("div",{class:"grid2 even"},[
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-operator",text:"Provozovatel webu"}), op]),
+      el("div",{class:"field"},[el("label",{class:"label",for:"adm-mail",text:"Kontaktní e-mail"}), mail])
     ]),
     msgEl("pay"),
     el("div",{class:"row"},[save])
@@ -2293,19 +2329,287 @@ function adminPayments(A){
   ];
 }
 
+
+/* =========================================================
+   Upozornění (zvoneček v liště)
+   ========================================================= */
+var NOTIF_ICON = {credits:"＋", follow:"♥", rating:"★", new:"✦", verified:"✓"};
+function timeAgo(d){
+  var s = (Date.now() - new Date(d).getTime()) / 1000;
+  if (s < 60) return "teď";
+  if (s < 3600) return "před "+Math.floor(s/60)+" min";
+  if (s < 86400) return "před "+Math.floor(s/3600)+" h";
+  if (s < 7*86400){ var n = Math.floor(s/86400); return "před "+n+" "+plural(n,"dnem","dny","dny"); }
+  return fmtDate(d);
+}
+var notifTimer = null;
+function loadNotifs(){
+  if (!S.me) return Promise.resolve();
+  return sb.from("notifications").select("id,kind,body,link,is_read,created_at").order("created_at",{ascending:false}).limit(30).then(function(r){
+    if (r.error) return;
+    S.notifs = r.data || [];
+    S.unread = S.notifs.filter(function(n){ return !n.is_read; }).length;
+    var open = document.querySelector("details.bellmenu[open]");
+    renderBar();
+    if (open){ var d = document.querySelector("details.bellmenu"); if (d) d.setAttribute("open", ""); }
+  });
+}
+function startNotifPolling(){
+  clearInterval(notifTimer);
+  notifTimer = setInterval(function(){ if (S.me && document.visibilityState === "visible") loadNotifs(); }, 60000);
+}
+function markNotifs(ids){
+  if (!ids.length) return Promise.resolve();
+  S.notifs.forEach(function(n){ if (ids.indexOf(n.id) >= 0) n.is_read = true; });
+  S.unread = S.notifs.filter(function(n){ return !n.is_read; }).length;
+  return sb.from("notifications").update({is_read:true}).in("id", ids);
+}
+function bellMenu(){
+  var list = S.notifs || [];
+  var items = list.length ? list.map(function(n){
+    return el("a",{href:n.link || "#kvizy", class:"notif"+(n.is_read ? "" : " unread"), role:"menuitem", onclick:function(){
+      if (!n.is_read) markNotifs([n.id]);
+      var d = document.querySelector("details.bellmenu"); if (d) d.removeAttribute("open");
+    }},[
+      el("span",{class:"nicon k-"+n.kind,"aria-hidden":"true",text:NOTIF_ICON[n.kind] || "•"}),
+      el("span",{class:"ntext"},[el("span",{text:n.body}), el("small",{text:timeAgo(n.created_at)})])
+    ]);
+  }) : [el("p",{class:"muted small nempty",text:"Zatím tu nic není. Ozveme se, až ti někdo koupí materiál, ohodnotí kvíz nebo tě začne sledovat."})];
+  return el("details",{class:"bellmenu"},[
+    el("summary",{class:"iconbtn","aria-label": S.unread ? "Upozornění, "+S.unread+" nepřečtených" : "Upozornění"},[
+      icon("bell", 20), S.unread ? el("span",{class:"badge dot",text: S.unread > 9 ? "9+" : String(S.unread)}) : null
+    ]),
+    el("div",{class:"menu notifmenu",role:"menu"},[
+      el("div",{class:"nhead"},[
+        el("strong",{text:"Upozornění"}),
+        S.unread ? el("button",{class:"btn link small",type:"button",text:"Označit vše jako přečtené",onclick:function(e){
+          e.preventDefault();
+          markNotifs(list.filter(function(n){ return !n.is_read; }).map(function(n){ return n.id; })).then(function(){ renderBar(); var d = document.querySelector("details.bellmenu"); if (d) d.setAttribute("open",""); });
+        }}) : null
+      ]),
+      el("div",{class:"nlist"}, items)
+    ])
+  ]);
+}
+
+/* =========================================================
+   Oblíbené (uložené na později)
+   ========================================================= */
+function loadFavs(){
+  return sb.from("favorites").select("kind,item_id,created_at").eq("user_id", S.me).order("created_at",{ascending:false}).then(function(r){
+    var o = {}; (r.data || []).forEach(function(f){ o[f.kind+":"+f.item_id] = f.created_at; }); S.favs = o;
+  });
+}
+function isFav(kind, id){ return !!(S.favs && S.favs[kind+":"+id]); }
+function favButton(kind, id){
+  var on = isFav(kind, id);
+  return el("button",{class:"btn ghost favbtn"+(on ? " on" : ""),type:"button","aria-pressed":String(on),text: on ? "★ Uloženo" : "☆ Uložit",onclick:function(e){
+    var b = e.currentTarget; b.disabled = true;
+    var req = on ? sb.from("favorites").delete().eq("user_id", S.me).eq("kind", kind).eq("item_id", id)
+                 : sb.from("favorites").insert({kind:kind, item_id:id});
+    req.then(function(r){
+      b.disabled = false;
+      if (r.error) return err("err", dbErrText(r.error));
+      if (on) delete S.favs[kind+":"+id]; else S.favs[kind+":"+id] = new Date().toISOString();
+      render();
+    });
+  }});
+}
+var favSeq = 0;
+function openFavorites(){
+  var seq = ++favSeq;
+  S.fav = {loading:true};
+  loadFavs().then(function(){
+    var ids = {quiz:[], material:[], teacher:[]};
+    Object.keys(S.favs).forEach(function(k){ var p = k.split(":"); ids[p[0]].push(p[1]); });
+    var none = Promise.resolve({data:[]});
+    return Promise.all([
+      ids.quiz.length ? sb.from("quizzes").select(QUIZ_COLS).in("id", ids.quiz) : none,
+      ids.material.length ? sb.from("materials").select(MAT_COLS).in("id", ids.material) : none,
+      ids.teacher.length ? sb.from("teachers").select("id,name,department,rating_avg,rating_count,created_at,verified_at,verified_by").in("id", ids.teacher) : none
+    ]);
+  }).then(function(r){
+    if (seq !== favSeq) return;
+    var e = r[0].error || r[1].error || r[2].error;
+    var byDate = function(kind){ return function(a,b){ return (S.favs[kind+":"+b.id] || "").localeCompare(S.favs[kind+":"+a.id] || ""); }; };
+    S.fav = e ? {error:dbErrText(e)} : {quizzes:(r[0].data||[]).sort(byDate("quiz")), materials:(r[1].data||[]).sort(byDate("material")), teachers:(r[2].data||[]).sort(byDate("teacher"))};
+    if (S.view === "favorites") render();
+  });
+}
+function favoritesView(){
+  var F = S.fav || {};
+  var head = el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Moje"}), el("h1",{text:"Uložené"})])]);
+  if (F.loading) return [head, el("p",{class:"muted",text:"Načítám…"})];
+  if (F.error) return [head, el("p",{class:"msg err",text:F.error})];
+  var total = F.quizzes.length + F.materials.length + F.teachers.length;
+  if (!total) return [head, el("div",{class:"panel empty"},[el("h2",{text:"Zatím nic uloženého"}), el("p",{class:"muted",text:"Na stránce kvízu, materiálu nebo učitele klikni na ☆ Uložit a najdeš ho tady."}), el("div",{},[el("a",{class:"btn",href:"#kvizy",text:"Procházet"})])])];
+  return [head,
+    F.quizzes.length ? el("h2",{text:"Kvízy ("+F.quizzes.length+")"}) : null,
+    F.quizzes.length ? el("div",{class:"cards"}, F.quizzes.map(function(q){ return quizCard(q, true); })) : null,
+    F.materials.length ? el("h2",{text:"Materiály ("+F.materials.length+")"}) : null,
+    F.materials.length ? el("div",{class:"cards"}, F.materials.map(function(m){ return materialCard(m, true); })) : null,
+    F.teachers.length ? el("h2",{text:"Učitelé ("+F.teachers.length+")"}) : null,
+    F.teachers.length ? el("div",{class:"cards"}, F.teachers.map(teacherCard)) : null
+  ];
+}
+
+/* =========================================================
+   Žebříček
+   ========================================================= */
+var BOARDS = {
+  authors:   {label:"Autoři",            title:"Nejvíc vydělaných kreditů", unit:function(v){ return kr(v); }, note:"Kredity za prodané kvízy, materiály a odemčené recenze."},
+  players:   {label:"Studenti",          title:"Nejvíc odehraných kvízů",   unit:function(v){ return v+" "+plural(v,"kvíz","kvízy","kvízů"); }, note:"Počítá se každé dohrání kvízu."},
+  creators:  {label:"Tvůrci",            title:"Nejvíc přidaného obsahu",   unit:function(v){ return v+" "+plural(v,"příspěvek","příspěvky","příspěvků"); }, note:"Kvízy a materiály dohromady."},
+  reviewers: {label:"Recenzenti",        title:"Nejvíc recenzí učitelů",    unit:function(v){ return v+" "+plural(v,"recenze","recenze","recenzí"); }, note:"Recenze učitelů."},
+  top:       {label:"Nejlepší kvízy",    title:"Nejlépe hodnocené kvízy",   note:"Kvízy s aspoň 2 hodnoceními."}
+};
+var boardSeq = 0;
+function openBoard(){
+  var seq = ++boardSeq, kind = S.boardKind || "authors";
+  S.board = {loading:true};
+  if (kind === "top"){
+    var go2 = S.quizzes.length ? Promise.resolve() : loadQuizzes();
+    go2.then(function(){
+      if (seq !== boardSeq) return;
+      var rows = S.quizzes.filter(function(q){ return q.rating_count >= 2; })
+        .sort(function(a,b){ return (Number(b.rating_avg)||0) - (Number(a.rating_avg)||0) || b.rating_count - a.rating_count; }).slice(0, 20);
+      S.board = {quizzes:rows}; if (S.view === "board") render();
+    });
+    return;
+  }
+  sb.rpc("leaderboard",{p_kind:kind, p_days: S.boardAll ? null : 30}).then(function(r){
+    if (seq !== boardSeq) return;
+    S.board = r.error ? {error:dbErrText(r.error)} : {rows:r.data || []};
+    if (S.view === "board") render();
+  });
+}
+function boardView(){
+  var kind = S.boardKind || "authors", cfg = BOARDS[kind], B = S.board || {};
+  var kinds = el("div",{class:"tabs",role:"group","aria-label":"Druh žebříčku"}, Object.keys(BOARDS).map(function(k){
+    return el("button",{type:"button",class:"tab","aria-pressed":String(k === kind),text:BOARDS[k].label,onclick:function(){ S.boardKind = k; openBoard(); render(); }});
+  }));
+  var period = kind === "top" ? null : el("div",{class:"tabs",role:"group","aria-label":"Období"},[
+    el("button",{type:"button",class:"tab","aria-pressed":String(!S.boardAll),text:"Posledních 30 dní",onclick:function(){ S.boardAll = false; openBoard(); render(); }}),
+    el("button",{type:"button",class:"tab","aria-pressed":String(!!S.boardAll),text:"Celkově",onclick:function(){ S.boardAll = true; openBoard(); render(); }})
+  ]);
+  var body;
+  if (B.loading) body = el("p",{class:"muted",text:"Načítám…"});
+  else if (B.error) body = el("p",{class:"msg err",text:B.error});
+  else if (kind === "top") body = B.quizzes.length ? el("ol",{class:"board"}, B.quizzes.map(function(q, i){
+      return el("li",{class: i < 3 ? "podium p"+(i+1) : ""},[
+        el("span",{class:"rank",text:String(i+1)}),
+        el("span",{class:"cardicon sm"},[icon("quiz",18)]),
+        el("span",{class:"who"},[el("a",{class:"plink",href:"#q/"+q.id,text:q.title}), el("small",{class:"muted",text:"od "+authorOf(q)})]),
+        el("span",{class:"val stars",text:"★ "+Number(q.rating_avg).toFixed(1).replace(".", ",")+" ("+q.rating_count+")"})
+      ]);
+    })) : el("p",{class:"muted",text:"Zatím žádný kvíz nemá aspoň 2 hodnocení."});
+  else body = B.rows.length ? el("ol",{class:"board"}, B.rows.map(function(x, i){
+      var me = x.user_id === S.me;
+      return el("li",{class:(i < 3 ? "podium p"+(i+1) : "")+(me ? " me" : "")},[
+        el("span",{class:"rank",text:String(i+1)}),
+        avatarEl(x.user_id, x, "sm"),
+        el("span",{class:"who"},[profileLink(x.user_id, x.nickname + (me ? " (ty)" : ""))]),
+        el("span",{class:"val",text:cfg.unit(Number(x.value))})
+      ]);
+    })) : el("p",{class:"muted",text:"Za tohle období tu zatím nikdo není. Buď první!"});
+  return [
+    el("div",{class:"top"},[el("div",{},[el("span",{class:"label",text:"Procházet"}), el("h1",{text:"Žebříček"})])]),
+    browseTabs(),
+    kinds,
+    period,
+    el("section",{class:"panel"},[el("h2",{text:cfg.title}), el("p",{class:"muted small",text:cfg.note}), body])
+  ];
+}
+
+/* =========================================================
+   Obchodní podmínky a ochrana údajů (dostupné i bez přihlášení)
+   ========================================================= */
+function loadSiteInfo(){
+  return sb.from("site_settings").select("operator_name,contact_email,updated_at").eq("id", 1).maybeSingle().then(function(r){
+    S.site = r.data || {};
+    if (S.view === "terms") render();
+  });
+}
+function termsView(){
+  var si = S.site || {};
+  var who = si.operator_name || "[jméno provozovatele, doplní správce ve Správě]";
+  var mail = si.contact_email || "[kontaktní e-mail, doplní správce ve Správě]";
+  function sec(title, paras){ return el("section",{class:"tsec"},[el("h2",{text:title})].concat(paras.map(function(p){ return typeof p === "string" ? el("p",{text:p}) : p; }))); }
+  function ul(items){ return el("ul",{}, items.map(function(t){ return el("li",{text:t}); })); }
+  return [
+    el("div",{},[el("a",{class:"plink small",href: S.me ? "#kvizy" : "#",text: S.me ? "← Zpět na web" : "← Zpět na přihlášení"})]),
+    el("article",{class:"panel terms"},[
+      el("span",{class:"label",text:"ČZU Hub"}),
+      el("h1",{text:"Obchodní podmínky a ochrana údajů"}),
+      el("p",{class:"muted small",text:"Platné od 3. 10. 2026."}),
+      sec("1. Kdo web provozuje",[
+        "Web ČZU Hub provozuje "+who+" (dále „provozovatel“). Kontakt: "+mail+".",
+        "ČZU Hub je neoficiální studentský web. Není provozovaný, schválený ani podporovaný Českou zemědělskou univerzitou v Praze."
+      ]),
+      sec("2. Účet",[
+        "Pro používání webu je potřeba účet s e-mailem a přezdívkou. Za to, co pod svým účtem zveřejníš, odpovídáš ty.",
+        "Provozovatel může účet omezit nebo zrušit, pokud porušuje tyto podmínky (například urážky, spam, cizí autorská díla)."
+      ]),
+      sec("3. Kredity",[
+        "Kredity jsou virtuální jednotka, kterou na webu odemkneš placené kvízy, materiály a recenze. Kredity nejsou peníze, nedají se převést na jiný účet ani směnit zpět na peníze.",
+        "Kredity můžeš koupit v balíčcích uvedených na stránce Koupit kredity. Ceny jsou konečné.",
+        "Kredity, které dostaneš za prodej svého obsahu, slouží jen k použití na webu."
+      ]),
+      sec("4. Platba a připsání",[
+        "Kredity se platí bankovním převodem na účet provozovatele s variabilním symbolem objednávky. Kredity se připíšou po přijetí platby, obvykle do 1–2 pracovních dnů.",
+        "Nezaplacenou objednávku můžeš kdykoli zrušit. Pokud platba nepřijde do 14 dní, objednávka se může zrušit."
+      ]),
+      sec("5. Odstoupení od smlouvy a vrácení peněz",[
+        "Kredity jsou digitální obsah. Před nákupem výslovně souhlasíš s tím, že budou připsány hned po přijetí platby, a bereš na vědomí, že tím ztrácíš právo odstoupit od smlouvy do 14 dnů.",
+        "Pokud platba dorazí a kredity se ti nepřipíšou, nebo zaplatíš omylem víc, napiš na "+mail+" a provozovatel to vyřeší nebo peníze vrátí."
+      ]),
+      sec("6. Obsah od uživatelů",[
+        ul([
+          "Nahrávej jen obsah, ke kterému máš práva: vlastní výpisky, vlastní kvízy, odkazy. Nenahrávej cizí skripta, učebnice ani testy bez svolení autora.",
+          "Recenze učitelů piš věcně a slušně. Zakázané jsou urážky, lži a osobní údaje.",
+          "Za správnost obsahu odpovídá jeho autor. Štítek „Ověřeno moderátorem“ znamená, že obsah někdo zkontroloval, ne záruku správnosti.",
+          "Provozovatel a moderátoři mohou obsah, který porušuje tyto podmínky, smazat. Nahlásit ho můžeš tlačítkem Nahlásit."
+        ])
+      ]),
+      sec("7. Osobní údaje",[
+        "Ukládáme jen to, co je potřeba pro chod webu: e-mail (pro přihlášení), přezdívku, profilovku a popis, pokud je vyplníš, a tvoji aktivitu na webu (kvízy, materiály, hodnocení, nákupy, kredity).",
+        "Údaje jsou uložené ve službě Supabase na serverech v Evropské unii, web běží na GitHub Pages. Provozovatel je nikomu neprodává.",
+        "Přezdívku, profilovku, popis a to, co zveřejníš, vidí ostatní přihlášení uživatelé. E-mail ani nákupy ostatní nevidí.",
+        "O smazání účtu a všech údajů můžeš kdykoli požádat na "+mail+"."
+      ]),
+      sec("8. Změny podmínek",[
+        "Podmínky se mohou změnit. O větších změnách se dozvíš na webu. Pokračováním v používání webu s novými podmínkami souhlasíš."
+      ])
+    ])
+  ];
+}
+
+/* Patička na každé stránce. */
+var foot = document.getElementById("foot");
+function renderFoot(){
+  if (!foot) return;
+  foot.replaceChildren(el("div",{class:"footin"},[
+    el("span",{text:"ČZU Hub · neoficiální studentský web"}),
+    el("a",{href:"#podminky",text:"Obchodní podmínky a ochrana údajů"})
+  ]));
+}
+
 /* ---------- start ---------- */
 function onSession(session){
   S.session = session;
   if (!session){
     S.me = null; S.profile = null; S.quizzes = []; S.people = null; S.prof = null; S.owned = {}; S.ownedM = {}; S.following = {}; S.openReports = 0; S.materials = null; S.teachers = null;
+    S.favs = {}; S.notifs = []; S.unread = 0; clearInterval(notifTimer);
+    if (location.hash === "#podminky"){ loadSiteInfo(); go("terms", true); return; }
     if (S.view !== "auth") go("auth", true);
     return;
   }
   if (S.me === session.user.id && S.view !== "loading" && S.view !== "auth") return;
   S.me = session.user.id;
-  Promise.all([refreshMe(), loadOwned(), loadOwnedM(), loadFollowing()]).then(function(){
+  Promise.all([refreshMe(), loadOwned(), loadOwnedM(), loadFollowing(), loadFavs()]).then(function(){
     if (!S.profile) S.profile = {nickname: (session.user.user_metadata && session.user.user_metadata.nickname) || "", credits:0, is_admin:false};
     S.msg = null; route();
+    loadNotifs(); startNotifPolling();
   });
 }
 
